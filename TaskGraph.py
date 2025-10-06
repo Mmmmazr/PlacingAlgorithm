@@ -15,8 +15,8 @@ def create_workflow_dag() -> OrderedDict[str, Task]:
     # 1. 定义DAG中所有的节点 (包括数据节点和计算节点)
     
     # --- 输入与Q,K,V生成阶段 ---
-    tasks['d_in_ht'] = Task(id='d_in_ht', name='Input Hidden ht', type='data', data_size=16.0, du_num=4)
-    tasks['d_kv_cache'] = Task(id='d_kv_cache', name='Input KV Cache', type='data', data_size=128.0, du_num=4)
+    tasks['d_in_ht'] = Task(id='d_in_ht', name='Input Hidden ht', type='data', data_size=16.0, du_num=4, du_size=4.0)
+    tasks['d_kv_cache'] = Task(id='d_kv_cache', name='Input KV Cache', type='data', data_size=128.0, du_num=4, du_size=32.0)
     
     tasks['c_gen_q'] = Task(id='c_gen_q', name='Generate Q Weights', type='compute', compute_type='linear', data_size=16.0, du_num=4, du_size=4.0)
     tasks['d_q_weights'] = Task(id='d_q_weights', name='Data Q Weights', type='data', data_size=16.0, du_num=4)
@@ -130,12 +130,13 @@ def create_workflow_dag() -> OrderedDict[str, Task]:
             tasks[parent_id].children.append(child_id)
             tasks[child_id].parents.append(parent_id)
 
+    print(f"Successfully created a DAG with {len(tasks)} nodes.")
+
     return tasks
 
 if __name__ == '__main__':
     # 用于测试的简单打印功能
     workflow = create_workflow_dag()
-    print(f"Successfully created a DAG with {len(workflow)} nodes.")
     for task_id, task in workflow.items():
         print(f"\n--- Node ID: {task_id} ---")
         print(f"  Name: {task.name}")

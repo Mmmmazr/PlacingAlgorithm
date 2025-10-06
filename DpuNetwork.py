@@ -19,7 +19,7 @@ def create_dpu_network(num_dpus: int) -> Tuple[Dict[str, DPU], Dict[str, Link]]:
         resources[f"{dpu_id}_ssd"] = Resource(id=f"{dpu_id}_ssd", name='ssd', type='storage', bandwidth_mbps=40000, memory=1024)
         resources[f"{dpu_id}_nic"] = Resource(id=f"{dpu_id}_nic", name='nic', type='communicate', bandwidth_mbps=100000)
         
-        # *** MODIFIED: 创建DPU内部NoC的全连接图 ***
+        # 创建DPU内部NoC的全连接图
         noc_edges = []
         resource_ids = list(resources.keys())
         for m in range(len(resource_ids)):
