@@ -1,85 +1,130 @@
-import copy
-import time
+# test_heft_insertion.py
 from typing import Dict, List, Tuple
-
-# 从你提供的文件中导入所有必要的类
+from collections import defaultdict
+from PlacementAlgorithm import PlacementOptimizer
 from BasicDefinitions import Task, Placement, DPU, Link, Resource
-from TaskGraph import create_workflow_dag
-from DpuNetwork import create_dpu_network 
-from PlacementAlgorithm import PlacementOptimizer, Router
-from DesSimulator import Simulator
+from DesSimulator import GlobalRouter # 假设这些导入都有效
 
-def evaluate_placement(dag, placement, network, links, router) -> float:
+def create_test_environment():
+    """创建一个专门用于测试插入逻辑的简单环境"""
+    
+    # 1. 创建任务图 (DAG)
+    dag: Dict[str, Task] = {
+        "T_A": Task(id="T_A", name="Task_A_HighPrio", type='compute', compute_type='linear'),
+        "T_B": Task(id="T_B", name="Task_B_LowPrio", type='compute', compute_type='add'),
+        "T_C": Task(id="T_C", name="Task_C_MidPrio", type='compute', compute_type='einsum'),
+    }
+    # 手动设置rank_u来控制调度顺序: A -> C -> B
+    dag["T_A"].rank_u = 300
+    dag["T_C"].rank_u = 200
+    dag["T_B"].rank_u = 100
+    
+    # 2. 创建网络
+    network: Dict[str, DPU] = {
+        "dpu0": DPU(
+            id="dpu0",
+            resources={"dpu0_arm": Resource("dpu0_arm", "arm", "compute", capacity=1)}
+        )
+    }
+    links: Dict[str, Link] = {}
+    
+    return dag, network, links
+
+class MockPlacementOptimizer(PlacementOptimizer):
     """
-    一个辅助函数，用于调用DES来评估任何给定放置方案的成本（总执行时间）。
+    一个用于测试的子类，重载了部分方法以精确控制测试条件。
     """
-    simulator = Simulator(dag, placement, network, links, router)
-    makespan = simulator.start_simulation()
-    return makespan
+    def __init__(self, dag, network, links):
+        super().__init__(dag, network, links)
+        self.currently_placing_task_id = None # 初始化属性
 
-if __name__ == "__main__":
-    
-    # --- 1. 初始化工作流和硬件环境 ---
-    print("="*30)
-    print("Step 1: Initializing DAG and DPU Network")
-    print("="*30)
-    dag = create_workflow_dag()
-    network, links = create_dpu_network(num_dpus=4)
-    router = Router(network, links)
-    
-    # --- 2. 使用 HEFT 生成初始放置方案 ---
-    print("\n" + "="*30)
-    print("Step 2: Running HEFT to get initial placement")
-    print("="*30)
-    
-    optimizer = PlacementOptimizer(dag, network, links)
-    
-    start_time = time.time()
-    initial_placement = optimizer.run_heft()
-    heft_time = time.time() - start_time
+    def _get_execution_time(self, task: Task, resource_id: str) -> float:
+        """为测试任务返回固定的执行时间"""
+        if task.id == "T_A": return 30.0
+        if task.id == "T_B": return 20.0
+        if task.id == "T_C": return 25.0
+        return 0.0
 
-    print(f"\nHEFT execution time: {heft_time:.4f} seconds.")
-    print("Initial Placement by HEFT:")
-    for task_id, res_id in initial_placement.items():
-        print(f"  - Task '{dag[task_id].name}' ({task_id}) -> Resource '{res_id}'")
+    def _calculate_data_arrival_time(self, parent_id: str, child_res_id: str,
+                                       placement: Placement, task_finish_time: Dict) -> float:
+        """为Task C伪造一个很晚的数据到达时间"""
+        if self.currently_placing_task_id == 'T_C':
+            return 80.0 # 关键条件：T_C在t=80时才就绪
+        return 0.0 # 其他任务都在t=0时就绪
 
-    # --- 3. 评估 HEFT 方案的真实性能 ---
-    print("\n" + "="*30)
-    print("Step 3: Evaluating HEFT placement with DES")
-    print("="*30)
-    initial_cost = evaluate_placement(copy.deepcopy(dag), initial_placement, network, links, router)
-    print(f"DES evaluated cost for HEFT placement: {initial_cost:.2f} us")
+    def run_heft(self) -> Placement:
+        print("Running MOCKED HEFT for insertion test...")
+        sorted_tasks = sorted(self.dag.values(), key=lambda t: t.rank_u, reverse=True)
+        
+        placement: Dict[str, str] = {}
+        task_finish_time: Dict[str, float] = {}
+        # 【已修正】在此处添加了对 resource_busy_slots 的初始化
+        resource_busy_slots: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
+
+        for task in sorted_tasks:
+            self.currently_placing_task_id = task.id
+            target_resources = self.compute_resources
+            best_resource = ""
+            min_eft = float('inf')
+            best_est = 0.0
+
+            print(f"\n--- Placing Task: {task.id} ('{task.name}') ---")
+            
+            for res_id in target_resources:
+                ready_time = self._calculate_data_arrival_time(None, res_id, placement, task_finish_time)
+                execution_time = self._get_execution_time(task, res_id)
+                
+                est = 0.0
+                busy_slots = sorted(resource_busy_slots.get(res_id, []))
+                
+                if not busy_slots:
+                    est = ready_time
+                else:
+                    if ready_time + execution_time <= busy_slots[0][0]:
+                        est = ready_time
+                    else:
+                        found_slot = False
+                        for i in range(len(busy_slots) - 1):
+                            gap_start = busy_slots[i][1]
+                            gap_end = busy_slots[i+1][0]
+                            potential_start = max(ready_time, gap_start)
+                            if potential_start + execution_time <= gap_end:
+                                est = potential_start
+                                found_slot = True
+                                break
+                        if not found_slot:
+                            est = max(ready_time, busy_slots[-1][1])
+
+                current_eft = est + execution_time
+                
+                if current_eft < min_eft:
+                    min_eft = current_eft
+                    best_est = est
+                    best_resource = res_id
+            
+            placement[task.id] = best_resource
+            task_finish_time[task.id] = min_eft
+            resource_busy_slots[best_resource].append((best_est, min_eft))
+            
+            final_slots = sorted(resource_busy_slots[best_resource])
+            print(f"  >> Placed on: '{best_resource}' with DataReady={ready_time:.2f}, EST={best_est:.2f}, EFT={min_eft:.2f} us")
+            print(f"  >> Resource '{best_resource}' busy slots: {final_slots}")
+        
+        print("\nHEFT test finished.")
+        return placement
+
+if __name__ == '__main__':
+    print("="*50)
+    print("Running HEFT Insertion Logic Verification Test")
+    print("="*50)
+
+    dag, network, links = create_test_environment()
     
-    # --- 4. 使用模拟退火进行优化 ---
-    print("\n" + "="*30)
-    print("Step 4: Running Simulated Annealing for optimization")
-    print("="*30)
+    # 为了让测试脚本独立运行，我们需要确保它能找到 PlacementAlgorithm
+    # 这里我们直接在脚本内定义了 MockPlacementOptimizer，所以没有问题
+    mock_optimizer = MockPlacementOptimizer(dag, network, links)
+    final_placement = mock_optimizer.run_heft()
     
-    start_time = time.time()
-    # 参数可以根据问题的复杂度和需要调整
-    best_placement = optimizer.run_simulated_annealing(
-        initial_placement=initial_placement,
-        initial_temp=1000,
-        final_temp=1,
-        alpha=0.99,
-        steps_per_temp=50  # 减少步数以加快示例运行
-    )
-    sa_time = time.time() - start_time
-    
-    print(f"\nSimulated Annealing execution time: {sa_time:.4f} seconds.")
-
-    # --- 5. 评估最终方案并报告结果 ---
-    print("\n" + "="*30)
-    print("Step 5: Final Evaluation and Report")
-    print("="*30)
-    final_cost = evaluate_placement(copy.deepcopy(dag), best_placement, network, links, router)
-
-    print("Final Optimized Placement by SA:")
-    for task_id, res_id in best_placement.items():
-        print(f"  - Task '{dag[task_id].name}' ({task_id}) -> Resource '{res_id}'")
-
-    print("\n--- Performance Summary ---")
-    print(f"Initial Cost (from HEFT): {initial_cost:.2f} us")
-    print(f"Final Cost (after SA):    {final_cost:.2f} us")
-    improvement = ((initial_cost - final_cost) / initial_cost) * 100 if initial_cost > 0 else 0
-    print(f"Improvement: {improvement:.2f}%")
+    print("\n--- Final Placement Result ---")
+    for task_id, res_id in final_placement.items():
+        print(f"  - Task '{task_id}' -> Resource '{res_id}'")
