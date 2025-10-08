@@ -124,14 +124,14 @@ class PlacementOptimizer:
             return 0.0
 
     def run_heft(self) -> Placement:
-        print("Running HEFT with Global Router for initial placement...")
+        # print("Running HEFT with Global Router for initial placement...")
         self._compute_rank_u()
 
-        print("\n--- Verifying Task Ranks (Top 5) ---")
+        # print("\n--- Verifying Task Ranks (Top 5) ---")
         sorted_tasks_for_print = sorted(self.dag.values(), key=lambda t: t.rank_u, reverse=True)
-        for i in range(min(5, len(sorted_tasks_for_print))):
-            task = sorted_tasks_for_print[i]
-            print(f"  Rank {i+1}: Task='{task.id}' ('{task.name}'), rank_u={task.rank_u:.2f}")
+        # for i in range(min(5, len(sorted_tasks_for_print))):
+        #     task = sorted_tasks_for_print[i]
+        #     print(f"  Rank {i+1}: Task='{task.id}' ('{task.name}'), rank_u={task.rank_u:.2f}")
         
         sorted_tasks = list(sorted_tasks_for_print)
         
@@ -146,7 +146,7 @@ class PlacementOptimizer:
             min_eft = float('inf')
             best_est = 0.0 # 记录最佳方案的开始执行时间
 
-            print(f"\n--- Placing Task: {task.id} ('{task.name}') ---")
+            # print(f"\n--- Placing Task: {task.id} ('{task.name}') ---")
             for res_id in target_resources:
                 # 1. 计算数据到达时间 (Ready Time)
                 ready_time = 0.0
@@ -197,10 +197,10 @@ class PlacementOptimizer:
             task_finish_time[task.id] = min_eft
             resource_busy_slots[best_resource].append((best_est, min_eft))
 
-            print(f"{best_resource}: {resource_busy_slots[best_resource]}")
-            print(f"  >> Placed on: '{best_resource}', EST={best_est:.2f}, EFT={min_eft:.2f} us")
+            # print(f"{best_resource}: {resource_busy_slots[best_resource]}")
+            # print(f"  >> Placed on: '{best_resource}', EST={best_est:.2f}, EFT={min_eft:.2f} us")
         
-        print("\nHEFT finished.")
+        # print("\nHEFT finished.")
         return placement
 
     def run_simulated_annealing(self, initial_placement: Placement,
