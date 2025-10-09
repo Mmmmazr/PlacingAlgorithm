@@ -205,7 +205,7 @@ class PlacementOptimizer:
 
     def run_simulated_annealing(self, initial_placement: Placement,
                                 initial_temp=1000, final_temp=1, alpha=0.99, steps_per_temp=100) -> Placement:
-        print("Running Simulated Annealing for optimization...")
+        # print("Running Simulated Annealing for optimization...")
         current_placement = copy.deepcopy(initial_placement)
         
         simulator = Simulator(self.dag, current_placement, self.network, self.links, self.router)
@@ -246,7 +246,7 @@ class PlacementOptimizer:
             print(f"Temp: {temp:.2f}, Current Cost: {current_cost:.2f} us, Best Cost: {best_cost:.2f} us")
             temp *= alpha
         
-        print("Simulated Annealing finished.")
+        # print("Simulated Annealing finished.")
         return best_placement
 
 # test for router & HEFT
