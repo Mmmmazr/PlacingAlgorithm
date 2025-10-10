@@ -16,7 +16,6 @@ class Resource:
 @dataclass
 class DPU:
     id: str
-    # *** MODIFIED: NoC is now a list of edges (tuples) to represent a graph ***
     noc: List[Tuple[str, str]] = field(default_factory=list) 
     resources: Dict[str, Resource] = field(default_factory=dict)
 

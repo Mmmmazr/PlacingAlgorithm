@@ -2,19 +2,9 @@ from collections import OrderedDict
 from BasicDefinitions import Task
 
 def create_workflow_dag() -> OrderedDict[str, Task]:
-    """
-    根据附图的数据处理流程，创建一个符合规范的、节点为数据或操作的DAG。
-
-    - 'data'类型的节点代表图中的数据块。
-    - 'compute'类型的节点代表对数据进行处理的操作。
-    - 节点的ID以 'd_' 开头表示数据 (data)，以 'c_' 开头表示计算 (compute)。
-    - data_size 是对数据大小的估算值，单位为MB。
-    """
+    """创建DAG"""
     tasks = OrderedDict()
 
-    # 1. 定义DAG中所有的节点 (包括数据节点和计算节点)
-    
-    # --- 输入与Q,K,V生成阶段 ---
     tasks['d_in_ht'] = Task(id='d_in_ht', name='Input Hidden ht', type='data', data_size=16.0, du_num=4, du_size=4.0)
     tasks['d_kv_cache'] = Task(id='d_kv_cache', name='Input KV Cache', type='data', data_size=128.0, du_num=4, du_size=32.0)
     
@@ -30,14 +20,12 @@ def create_workflow_dag() -> OrderedDict[str, Task]:
     tasks['c_apply_rope_k'] = Task(id='c_apply_rope_k', name='Apply RoPE to K', type='compute', compute_type='rope', data_size=8.0, du_num=4, du_size=2.0)
     tasks['d_k_pe'] = Task(id='d_k_pe', name='Data k_pe', type='data', data_size=8.0, du_num=4)
 
-    # --- Q路径处理 ---
     tasks['c_apply_rope_q'] = Task(id='c_apply_rope_q', name='Apply RoPE to Q', type='compute', compute_type='rope', data_size=8.0, du_num=4, du_size=2.0)
     tasks['d_q_pe'] = Task(id='d_q_pe', name='Data q_pe', type='data', data_size=8.0, du_num=4)
     
     tasks['c_gen_q_nope'] = Task(id='c_gen_q_nope', name='Generate q_nope', type='compute', compute_type='slice', data_size=8.0, du_num=4, du_size=2.0)
     tasks['d_q_nope'] = Task(id='d_q_nope', name='Data q_nope', type='data', data_size=8.0, du_num=4)
 
-    # --- WKV_B路径处理 (操作 1, 2, 6) ---
     tasks['c_op1_view'] = Task(id='c_op1_view', name='Op 1: View wkv_b', type='compute', compute_type='view', data_size=16.0, du_num=4, du_size=4.0)
     tasks['d_wkv_b_viewed'] = Task(id='d_wkv_b_viewed', name='Data wkv_b Viewed', type='data', data_size=16.0, du_num=4)
 
@@ -47,7 +35,6 @@ def create_workflow_dag() -> OrderedDict[str, Task]:
     tasks['c_op6_slice_uv'] = Task(id='c_op6_slice_uv', name='Op 6: Slice w_uv', type='compute', compute_type='slice', data_size=8.0, du_num=4, du_size=2.0)
     tasks['d_w_uv'] = Task(id='d_w_uv', name='Data w_uv', type='data', data_size=8.0, du_num=4)
 
-    # --- Attention分数计算 (操作 3, 4, 5 和加法) ---
     tasks['c_op3_einsum'] = Task(id='c_op3_einsum', name='Op 3: Einsum for score_nope part 1', type='compute', compute_type='einsum', data_size=4.0, du_num=4, du_size=1.0)
     tasks['d_score_nope1'] = Task(id='d_score_nope1', name='Data score_nope part 1', type='data', data_size=4.0, du_num=4)
 
@@ -60,7 +47,6 @@ def create_workflow_dag() -> OrderedDict[str, Task]:
     tasks['c_add_scores'] = Task(id='c_add_scores', name='Add Scores', type='compute', compute_type='add', data_size=4.0, du_num=4, du_size=1.0)
     tasks['d_scores_sum'] = Task(id='d_scores_sum', name='Data Scores Summed', type='data', data_size=4.0, du_num=4)
     
-    # --- Softmax和输出计算 (操作 7 和 wo) ---
     tasks['c_softmax'] = Task(id='c_softmax', name='Softmax', type='compute', compute_type='softmax', data_size=4.0, du_num=4, du_size=1.0)
     tasks['d_scores_softmax'] = Task(id='d_scores_softmax', name='Data Scores after Softmax', type='data', data_size=4.0, du_num=4)
 
@@ -70,7 +56,6 @@ def create_workflow_dag() -> OrderedDict[str, Task]:
     tasks['c_op_wo'] = Task(id='c_op_wo', name='Op wo: Linear Output', type='compute', compute_type='linear', data_size=16.0, du_num=4, du_size=4.0)
     tasks['d_out_ht'] = Task(id='d_out_ht', name='Output Hidden ht', type='data', data_size=16.0, du_num=4)
 
-    # 2. 定义节点之间的依赖关系 (父->子)
     edges = [
         ('d_in_ht', 'c_gen_q'),
         ('d_in_ht', 'c_gen_wkv_b'),
@@ -114,7 +99,6 @@ def create_workflow_dag() -> OrderedDict[str, Task]:
         ('d_scores_sum', 'c_softmax'),
         ('c_softmax', 'd_scores_softmax'),
         
-        # 简化：操作7使用Softmax的输出和V、w_uv。这里假设它们被一个计算节点消耗
         ('d_scores_softmax', 'c_op7_einsum'),
         ('d_V', 'c_op7_einsum'),
         ('d_w_uv', 'c_op7_einsum'),
@@ -124,7 +108,6 @@ def create_workflow_dag() -> OrderedDict[str, Task]:
         ('c_op_wo', 'd_out_ht'),
     ]
 
-    # 3. 根据依赖关系构建图
     for parent_id, child_id in edges:
         if parent_id in tasks and child_id in tasks:
             tasks[parent_id].children.append(child_id)
@@ -135,7 +118,6 @@ def create_workflow_dag() -> OrderedDict[str, Task]:
     return tasks
 
 if __name__ == '__main__':
-    # 用于测试的简单打印功能
     workflow = create_workflow_dag()
     for task_id, task in workflow.items():
         print(f"\n--- Node ID: {task_id} ---")
