@@ -148,7 +148,10 @@ class Simulator:
             self.resources[f"{dpu_id}_noc_bus"] = SharedBus(self.env, f"{dpu_id}_noc_bus", NOC_BANDWIDTH_MBPS)
             for res in dpu.resources.values():
                 if res.type == 'compute': 
-                    self.resources[res.id] = simpy.Resource(self.env, capacity=res.capacity)
+                    core_pool = simpy.Store(self.env, capacity=res.capacity)
+                    for i in range(res.capacity):
+                        core_pool.put(f"core_{i}")
+                    self.resources[res.id] = core_pool
                 elif res.bandwidth_mbps > 0: 
                     self.resources[res.id] = SharedBus(self.env, res.id, res.bandwidth_mbps)
         for link in self.links.values():
@@ -202,7 +205,7 @@ class Simulator:
         task = self.dag[task_id]
         yield self.env.process(self._wait_for_parent_data(task_id, du_index, pipelined_parents, non_pipelined_parents))
         compute_res_id = self.placement[task_id]
-        compute_resource = self.resources[compute_res_id]
+        compute_resource_pool = self.resources[compute_res_id]
         # get workload
         if hasattr(task, 'workload'):
             du_compute_time = task.workload / (task.du_num or 1)
@@ -211,10 +214,15 @@ class Simulator:
             base_workload = workload.get(task.compute_type, 5)
             du_compute_time = base_workload / (task.du_num or 1)
         
-        with compute_resource.request() as req: # 调用计算资源
-            yield req
+        core_token = yield compute_resource_pool.get()  # 请求一个核心
+        try:
+            # print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Got core, starting compute on '{compute_res_id}'.")
             if du_compute_time > 0:
                 yield self.env.timeout(du_compute_time)
+        finally:
+            # print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Computation done, returning core.")
+            yield compute_resource_pool.put(core_token) # 归还核心
+
         self.task_du_done_events[task_id][du_index].succeed()
 
     def _data_worker(self, task_id: str, du_index: int, pipelined_parents: List[str], non_pipelined_parents: List[str]):

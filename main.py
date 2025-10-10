@@ -1,5 +1,3 @@
-
-# 新版main.py：自动调用TaskGraph和DpuNetwork生成任务图和DPU网络，运行PlacementAlgorithm
 from PlacementAlgorithm import PlacementOptimizer
 from DesSimulator import Simulator
 from TaskGraph import create_workflow_dag

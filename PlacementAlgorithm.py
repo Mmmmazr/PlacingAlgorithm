@@ -67,7 +67,7 @@ class PlacementOptimizer:
 
     def _calculate_data_arrival_time(self, parent_id: str, child_res_id: str,
                                        placement: Placement, task_finish_time: Dict) -> float:
-        """基于完整资源路径及其瓶颈带宽计算数据到达时间。(注意：此简化模型未考虑链路争用)"""
+        """计算数据到达时间。(未考虑链路争用)"""
         data_ready_time = task_finish_time.get(parent_id, 0)
         parent_task = self.dag[parent_id]
         data_size = parent_task.data_size
@@ -110,13 +110,11 @@ class PlacementOptimizer:
         # print(f"({parent_id}, {child_res_id}): {duration}")
         return data_ready_time + duration
 
-    def _get_execution_time(self, task: Task, resource_id: str) -> float:
+    def _get_execution_time(self, task: Task, resource_id: str) -> float: # 重载后可根据resource_id的类型（如dpa vs arm）进行性能调整
         if task.type == 'compute':
             compute_workload = {'linear': 10, 'slice': 2, 'rope': 15, 'view': 1, 'einsum': 25, 'add': 2, 'softmax': 8}
-            # 将来可根据resource_id的类型（如dpa vs arm）进行性能缩放
             return float(compute_workload.get(task.compute_type, 5))
-        else: # 'data' task
-            # 注意: 基础资源ID可能需要从展开后的ID中提取，例如'dpu0_dram_0' -> 'dpu0_dram'
+        else: # 'data'
             base_res_id = '_'.join(resource_id.split('_')[:-1]) if resource_id.rsplit('_', 1)[-1].isdigit() else resource_id
             storage_resource = self._res_map.get(base_res_id)
             if storage_resource and storage_resource.bandwidth_mbps > 0:
@@ -127,8 +125,8 @@ class PlacementOptimizer:
         # print("Running HEFT with Global Router for initial placement...")
         self._compute_rank_u()
 
-        # print("\n--- Verifying Task Ranks (Top 5) ---")
         sorted_tasks_for_print = sorted(self.dag.values(), key=lambda t: t.rank_u, reverse=True)
+        # print("\n--- Verifying Task Ranks (Top 5) ---")
         # for i in range(min(5, len(sorted_tasks_for_print))):
         #     task = sorted_tasks_for_print[i]
         #     print(f"  Rank {i+1}: Task='{task.id}' ('{task.name}'), rank_u={task.rank_u:.2f}")
@@ -136,19 +134,19 @@ class PlacementOptimizer:
         sorted_tasks = list(sorted_tasks_for_print)
         
         placement: Placement = {}
-        # 使用“忙碌时段列表”替代单一的“可用时间点”
-        resource_busy_slots: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
         task_finish_time: Dict[str, float] = {}
+        resource_core_finish_times: Dict[str, List[float]] = defaultdict(list)
+        for res_id in self.compute_resources + self.storage_resources:
+            res_capacity = self._res_map[res_id].capacity
+            resource_core_finish_times[res_id] = [0.0] * res_capacity
 
         for task in sorted_tasks:
             target_resources = self.compute_resources if task.type == 'compute' else self.storage_resources
-            best_resource = ""
             min_eft = float('inf')
-            best_est = 0.0 # 记录最佳方案的开始执行时间
 
             # print(f"\n--- Placing Task: {task.id} ('{task.name}') ---")
             for res_id in target_resources:
-                # 1. 计算数据到达时间 (Ready Time)
+                # 数据到达时间ready_time
                 ready_time = 0.0
                 for parent_id in task.parents:
                     arrival_time = self._calculate_data_arrival_time(parent_id, res_id, placement, task_finish_time)
@@ -156,46 +154,24 @@ class PlacementOptimizer:
                 
                 execution_time = self._get_execution_time(task, res_id)
                 
-                # 2. 寻找可插入的、最早的执行开始时间 (EST)
-                est = 0.0
-                busy_slots = sorted(resource_busy_slots.get(res_id, []))
-                
-                if not busy_slots:
-                    est = ready_time
-                else:
-                    # 检查第一个空闲窗口（从0到第一个任务开始前）
-                    if ready_time + execution_time <= busy_slots[0][0]:
-                        est = ready_time
-                    else:
-                        # 遍历所有忙碌窗口之间的空隙
-                        found_slot = False
-                        for i in range(len(busy_slots) - 1):
-                            gap_start = busy_slots[i][1]
-                            gap_end = busy_slots[i+1][0]
-                            
-                            # 任务可以开始的最早时间是 max(数据就绪时间, 空隙开始时间)
-                            potential_start = max(ready_time, gap_start)
-                            
-                            if potential_start + execution_time <= gap_end:
-                                est = potential_start
-                                found_slot = True
-                                break
-                        
-                        # 如果所有空隙都不够，就放在最后一个任务的后面
-                        if not found_slot:
-                            est = max(ready_time, busy_slots[-1][1])
+                # 寻找可插入的最早的执行开始时间EST
+                core_times = resource_core_finish_times[res_id]
+                earliest_core_time = min(core_times)
+                core_idx = core_times.index(earliest_core_time)
 
+                # 任务的开始时间是“数据准备好”和“核心可用”中的较晚者
+                est = max(ready_time, earliest_core_time)
                 current_eft = est + execution_time
                 
                 if current_eft < min_eft:
                     min_eft = current_eft
-                    best_est = est
-                    best_resource = res_id
+                    best_resource_id = res_id
+                    best_core_idx = core_idx
             
-            # 3. 最终确定放置并更新状态
-            placement[task.id] = best_resource
+            placement[task.id] = best_resource_id
             task_finish_time[task.id] = min_eft
-            resource_busy_slots[best_resource].append((best_est, min_eft))
+            if best_resource_id and best_core_idx != -1:
+                resource_core_finish_times[best_resource_id][best_core_idx] = min_eft
 
             # print(f"{best_resource}: {resource_busy_slots[best_resource]}")
             # print(f"  >> Placed on: '{best_resource}', EST={best_est:.2f}, EFT={min_eft:.2f} us")
@@ -203,6 +179,7 @@ class PlacementOptimizer:
         # print("\nHEFT finished.")
         return placement
 
+    # 模拟退火
     def run_simulated_annealing(self, initial_placement: Placement,
                                 initial_temp=1000, final_temp=1, alpha=0.99, steps_per_temp=100) -> Placement:
         # print("Running Simulated Annealing for optimization...")
