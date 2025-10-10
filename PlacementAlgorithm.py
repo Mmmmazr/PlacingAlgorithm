@@ -121,6 +121,33 @@ class PlacementOptimizer:
                 return (task.data_size / storage_resource.bandwidth_mbps) * 1e6
             return 0.0
 
+    def _get_peak_memory_usage(self, existing_intervals: List[Tuple[float, float, float]],
+                                 start_time: float, end_time: float) -> float:
+        """扫描线"""
+        if start_time >= end_time:
+            return 0.0
+
+        events = []
+        for l, r, sz in existing_intervals:
+            events.append((l, sz))  
+            events.append((r, -sz)) 
+        events.sort()
+
+        peak_usage = 0.0
+        current_usage = 0.0
+        event_idx = 0
+        while event_idx < len(events) and events[event_idx][0] < start_time:
+            current_usage += events[event_idx][1]
+            event_idx += 1
+        peak_usage = current_usage
+
+        while event_idx < len(events) and events[event_idx][0] <= end_time:
+            current_usage += events[event_idx][1]
+            peak_usage = max(peak_usage, current_usage)
+            event_idx += 1
+            
+        return peak_usage
+
     def run_heft(self) -> Placement:
         # print("Running HEFT with Global Router for initial placement...")
         self._compute_rank_u()
@@ -139,10 +166,14 @@ class PlacementOptimizer:
         for res_id in self.compute_resources + self.storage_resources:
             res_capacity = self._res_map[res_id].capacity
             resource_core_finish_times[res_id] = [0.0] * res_capacity
+        # 存储资源峰值计算
+        storage_occupancy: Dict[str, List[Tuple[float, float, float]]] = defaultdict(list)
 
         for task in sorted_tasks:
             target_resources = self.compute_resources if task.type == 'compute' else self.storage_resources
             min_eft = float('inf')
+            best_choice_info = {}
+            best_resource_id = ""
 
             # print(f"\n--- Placing Task: {task.id} ('{task.name}') ---")
             for res_id in target_resources:
@@ -154,24 +185,54 @@ class PlacementOptimizer:
                 
                 execution_time = self._get_execution_time(task, res_id)
                 
-                # 寻找可插入的最早的执行开始时间EST
-                core_times = resource_core_finish_times[res_id]
-                earliest_core_time = min(core_times)
-                core_idx = core_times.index(earliest_core_time)
+                if task.type == 'compute':
+                    # 寻找可插入的最早的执行开始时间EST
+                    core_times = resource_core_finish_times[res_id]
+                    earliest_core_time = min(core_times)
+                    core_idx = core_times.index(earliest_core_time)
 
-                # 任务的开始时间是“数据准备好”和“核心可用”中的较晚者
-                est = max(ready_time, earliest_core_time)
-                current_eft = est + execution_time
+                    # 任务的开始时间是“数据准备好”和“核心可用”中的较晚者
+                    est = max(ready_time, earliest_core_time)
+                    current_eft = est + execution_time
+                    
+                    if current_eft < min_eft:
+                        min_eft = current_eft
+                        best_resource_id = res_id
+                        best_choice_info = {'core_idx': core_idx}
                 
-                if current_eft < min_eft:
-                    min_eft = current_eft
-                    best_resource_id = res_id
-                    best_core_idx = core_idx
+                else: # task.type == 'data'
+                    storage_write_finish_time = resource_core_finish_times[res_id][0]
+                    est = max(ready_time, storage_write_finish_time)
+                    eft = est + execution_time
+                    memory_check_start, memory_check_end = ready_time, eft
+                    storage_res_obj = self._res_map[res_id]
+                    required_memory_gb = task.data_size / 1024.0 # MB->GB
+                    
+                    if required_memory_gb > storage_res_obj.memory:
+                        continue 
+                    peak_usage_mb = self._get_peak_memory_usage(storage_occupancy[res_id], memory_check_start, memory_check_end)
+                    peak_usage_gb = peak_usage_mb / 1024.0
+                    if peak_usage_gb + required_memory_gb > storage_res_obj.memory:
+                        continue 
+
+                    current_eft = eft
+                    if current_eft < min_eft:
+                        min_eft = current_eft
+                        best_resource_id = res_id
+                        best_choice_info = {'core_idx': 0, 'ready_time': ready_time}
+
             
             placement[task.id] = best_resource_id
             task_finish_time[task.id] = min_eft
-            if best_resource_id and best_core_idx != -1:
-                resource_core_finish_times[best_resource_id][best_core_idx] = min_eft
+            if best_resource_id:
+                core_idx = best_choice_info['core_idx']
+                resource_core_finish_times[best_resource_id][core_idx] = min_eft
+                
+                if task.type == 'data':
+                    start_occupancy = best_choice_info['ready_time']
+                    end_occupancy = min_eft
+                    storage_occupancy[best_resource_id].append((start_occupancy, end_occupancy, task.data_size))
+
 
             # print(f"{best_resource}: {resource_busy_slots[best_resource]}")
             # print(f"  >> Placed on: '{best_resource}', EST={best_est:.2f}, EFT={min_eft:.2f} us")
