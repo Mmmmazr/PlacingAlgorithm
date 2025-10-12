@@ -1,0 +1,308 @@
+[
+  {
+    "id": "d_in_ht",
+    "name": "Input Hidden ht",
+    "type": "data",
+    "data_size": 16.0,
+    "du_num": 4,
+    "du_size": 4.0,
+    "child": ["c_gen_q", "c_gen_wkv_b"]
+  },
+  {
+    "id": "d_kv_cache",
+    "name": "Input KV Cache",
+    "type": "data",
+    "data_size": 128.0,
+    "du_num": 4,
+    "du_size": 32.0,
+    "child": ["c_gen_V", "c_apply_rope_k", "c_op4_einsum"]
+  },
+  {
+    "id": "c_gen_q",
+    "name": "Generate Q Weights",
+    "type": "compute",
+    "compute_type": "linear",
+    "data_size": 16.0,
+    "du_num": 4,
+    "du_size": 4.0,
+    "child": ["d_q_weights"]
+  },
+  {
+    "id": "d_q_weights",
+    "name": "Data Q Weights",
+    "type": "data",
+    "data_size": 16.0,
+    "du_num": 4,
+    "child": ["c_apply_rope_q", "c_gen_q_nope"]
+  },
+  {
+    "id": "c_gen_wkv_b",
+    "name": "Generate WKV_B Weights",
+    "type": "compute",
+    "compute_type": "linear",
+    "data_size": 16.0,
+    "du_num": 4,
+    "du_size": 4.0,
+    "child": ["d_wkv_b"]
+  },
+  {
+    "id": "d_wkv_b",
+    "name": "Data WKV_B Weights",
+    "type": "data",
+    "data_size": 16.0,
+    "du_num": 4,
+    "child": ["c_op1_view"]
+  },
+  {
+    "id": "c_gen_V",
+    "name": "Generate V from KV Cache",
+    "type": "compute",
+    "compute_type": "slice",
+    "data_size": 8.0,
+    "du_num": 4,
+    "du_size": 2.0,
+    "child": ["d_V"]
+  },
+  {
+    "id": "d_V",
+    "name": "Data V",
+    "type": "data",
+    "data_size": 8.0,
+    "du_num": 4,
+    "child": ["c_op7_einsum"]
+  },
+  {
+    "id": "c_apply_rope_k",
+    "name": "Apply RoPE to K",
+    "type": "compute",
+    "compute_type": "rope",
+    "data_size": 8.0,
+    "du_num": 4,
+    "du_size": 2.0,
+    "child": ["d_k_pe"]
+  },
+  {
+    "id": "d_k_pe",
+    "name": "Data k_pe",
+    "type": "data",
+    "data_size": 8.0,
+    "du_num": 4,
+    "child": ["c_op5_einsum"]
+  },
+  {
+    "id": "c_apply_rope_q",
+    "name": "Apply RoPE to Q",
+    "type": "compute",
+    "compute_type": "rope",
+    "data_size": 8.0,
+    "du_num": 4,
+    "du_size": 2.0,
+    "child": ["d_q_pe"]
+  },
+  {
+    "id": "d_q_pe",
+    "name": "Data q_pe",
+    "type": "data",
+    "data_size": 8.0,
+    "du_num": 4,
+    "child": ["c_op5_einsum"]
+  },
+  {
+    "id": "c_gen_q_nope",
+    "name": "Generate q_nope",
+    "type": "compute",
+    "compute_type": "slice",
+    "data_size": 8.0,
+    "du_num": 4,
+    "du_size": 2.0,
+    "child": ["d_q_nope"]
+  },
+  {
+    "id": "d_q_nope",
+    "name": "Data q_nope",
+    "type": "data",
+    "data_size": 8.0,
+    "du_num": 4,
+    "child": ["c_op3_einsum", "c_op4_einsum"]
+  },
+  {
+    "id": "c_op1_view",
+    "name": "Op 1: View wkv_b",
+    "type": "compute",
+    "compute_type": "view",
+    "data_size": 16.0,
+    "du_num": 4,
+    "du_size": 4.0,
+    "child": ["d_wkv_b_viewed"]
+  },
+  {
+    "id": "d_wkv_b_viewed",
+    "name": "Data wkv_b Viewed",
+    "type": "data",
+    "data_size": 16.0,
+    "du_num": 4,
+    "child": ["c_op2_slice_uk", "c_op6_slice_uv"]
+  },
+  {
+    "id": "c_op2_slice_uk",
+    "name": "Op 2: Slice w_uk",
+    "type": "compute",
+    "compute_type": "slice",
+    "data_size": 8.0,
+    "du_num": 4,
+    "du_size": 2.0,
+    "child": ["d_w_uk"]
+  },
+  {
+    "id": "d_w_uk",
+    "name": "Data w_uk",
+    "type": "data",
+    "data_size": 8.0,
+    "du_num": 4,
+    "child": ["c_op3_einsum"]
+  },
+  {
+    "id": "c_op6_slice_uv",
+    "name": "Op 6: Slice w_uv",
+    "type": "compute",
+    "compute_type": "slice",
+    "data_size": 8.0,
+    "du_num": 4,
+    "du_size": 2.0,
+    "child": ["d_w_uv"]
+  },
+  {
+    "id": "d_w_uv",
+    "name": "Data w_uv",
+    "type": "data",
+    "data_size": 8.0,
+    "du_num": 4,
+    "child": ["c_op7_einsum"]
+  },
+  {
+    "id": "c_op3_einsum",
+    "name": "Op 3: Einsum for score_nope part 1",
+    "type": "compute",
+    "compute_type": "einsum",
+    "data_size": 4.0,
+    "du_num": 4,
+    "du_size": 1.0,
+    "child": ["d_score_nope1"]
+  },
+  {
+    "id": "d_score_nope1",
+    "name": "Data score_nope part 1",
+    "type": "data",
+    "data_size": 4.0,
+    "du_num": 4,
+    "child": ["c_add_scores"]
+  },
+  {
+    "id": "c_op4_einsum",
+    "name": "Op 4: Einsum for score_nope part 2",
+    "type": "compute",
+    "compute_type": "einsum",
+    "data_size": 4.0,
+    "du_num": 4,
+    "du_size": 1.0,
+    "child": ["d_score_nope2"]
+  },
+  {
+    "id": "d_score_nope2",
+    "name": "Data score_nope part 2",
+    "type": "data",
+    "data_size": 4.0,
+    "du_num": 4,
+    "child": ["c_add_scores"]
+  },
+  {
+    "id": "c_op5_einsum",
+    "name": "Op 5: Einsum for score_pe",
+    "type": "compute",
+    "compute_type": "einsum",
+    "data_size": 4.0,
+    "du_num": 4,
+    "du_size": 1.0,
+    "child": ["d_score_pe"]
+  },
+  {
+    "id": "d_score_pe",
+    "name": "Data score_pe",
+    "type": "data",
+    "data_size": 4.0,
+    "du_num": 4,
+    "child": ["c_add_scores"]
+  },
+  {
+    "id": "c_add_scores",
+    "name": "Add Scores",
+    "type": "compute",
+    "compute_type": "add",
+    "data_size": 4.0,
+    "du_num": 4,
+    "du_size": 1.0,
+    "child": ["d_scores_sum"]
+  },
+  {
+    "id": "d_scores_sum",
+    "name": "Data Scores Summed",
+    "type": "data",
+    "data_size": 4.0,
+    "du_num": 4,
+    "child": ["c_softmax"]
+  },
+  {
+    "id": "c_softmax",
+    "name": "Softmax",
+    "type": "compute",
+    "compute_type": "softmax",
+    "data_size": 4.0,
+    "du_num": 4,
+    "du_size": 1.0,
+    "child": ["d_scores_softmax"]
+  },
+  {
+    "id": "d_scores_softmax",
+    "name": "Data Scores after Softmax",
+    "type": "data",
+    "data_size": 4.0,
+    "du_num": 4,
+    "child": ["c_op7_einsum"]
+  },
+  {
+    "id": "c_op7_einsum",
+    "name": "Op 7: Einsum for Output",
+    "type": "compute",
+    "compute_type": "einsum",
+    "data_size": 16.0,
+    "du_num": 4,
+    "du_size": 4.0,
+    "child": ["d_pre_output"]
+  },
+  {
+    "id": "d_pre_output",
+    "name": "Data Pre-Output",
+    "type": "data",
+    "data_size": 16.0,
+    "du_num": 4,
+    "child": ["c_op_wo"]
+  },
+  {
+    "id": "c_op_wo",
+    "name": "Op wo: Linear Output",
+    "type": "compute",
+    "compute_type": "linear",
+    "data_size": 16.0,
+    "du_num": 4,
+    "du_size": 4.0,
+    "child": ["d_out_ht"]
+  },
+  {
+    "id": "d_out_ht",
+    "name": "Output Hidden ht",
+    "type": "data",
+    "data_size": 16.0,
+    "du_num": 4,
+    "child": []
+  }
+]
