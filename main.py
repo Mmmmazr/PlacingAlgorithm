@@ -25,7 +25,11 @@ if __name__ == "__main__":
     print("[PHASE 3] 使用仿真器评估HEFT方案...")
     simulator_heft = Simulator(dag, initial_placement, network, links, optimizer.router)
     heft_cost = simulator_heft.start_simulation()
-    print(f"HEFT基线成本(Makespan): {heft_cost:.2f} us\n")
+    
+    if heft_cost == float('inf'):
+        print("HEFT基线方案因超出内存限制而无效！\n")
+    else:
+        print(f"HEFT基线成本(Makespan): {heft_cost:.2f} us\n")
 
     print("[PHASE 4] 运行模拟退火优化...")
     final_placement = optimizer.run_simulated_annealing(
@@ -43,7 +47,11 @@ if __name__ == "__main__":
     print("[PHASE 5] 仿真器评估最终方案...")
     simulator_sa = Simulator(dag, final_placement, network, links, optimizer.router)
     sa_cost = simulator_sa.start_simulation()
-    print(f"SA最终成本(Makespan): {sa_cost:.2f} us\n")
+    
+    if sa_cost == float('inf'):
+         print("SA最终方案因超出内存限制而无效！\n")
+    else:
+        print(f"SA最终成本(Makespan): {sa_cost:.2f} us\n")
 
     print("="*60)
     print(" 性能对比与验证 ")

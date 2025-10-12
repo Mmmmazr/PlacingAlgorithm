@@ -120,6 +120,20 @@ class SharedBus:
             self.process.interrupt()
         return completion_event
 
+class NewContainer(simpy.Container):
+    def put(self, amount: float):
+        if amount <= 1e-9:
+            raise ValueError
+        if amount > self.capacity:
+            raise ValueError
+        if self.level + amount > self.capacity:
+            raise ValueError
+        return super().put(amount)
+class StorageResource:
+    def __init__(self, env, name, bandwidth_mbps, memory_gb):
+        self.bus = SharedBus(env, f"{name}_bus", bandwidth_mbps)
+        self.memory_container = NewContainer(env, capacity=memory_gb * 1024, init=0)
+        # capacity被从GB->MB
 class Simulator:
     def __init__(self, dag: Dict[str, Task], placement: Placement, network: Dict[str, DPU], links: Dict[str, Link], router: GlobalRouter): 
         self.dag = dag
@@ -152,8 +166,9 @@ class Simulator:
                     for i in range(res.capacity):
                         core_pool.put(f"core_{i}")
                     self.resources[res.id] = core_pool
-                elif res.bandwidth_mbps > 0: 
-                    self.resources[res.id] = SharedBus(self.env, res.id, res.bandwidth_mbps)
+                elif res.type == 'storage' and res.bandwidth_mbps > 0: 
+                    self.resources[res.id] = StorageResource(self.env, res.id, res.bandwidth_mbps, res.memory)
+        
         for link in self.links.values():
             bandwidth_MBps = link.bandwidth_gbps * 125
             link_key = tuple(sorted((f"{link.source_dpu}_nic", f"{link.dest_dpu}_nic"))) # 保证link_key唯一
@@ -165,8 +180,12 @@ class Simulator:
             self.task_du_done_events[task_id] = [self.env.event() for _ in range(num_dus)]
 
         self.du_arrival_stores = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: None))) # ???
-        self.env.run(self.run()) # 开始模拟
-        return self.env.now
+        try:
+            self.env.run(self.run())
+            return self.env.now
+        except ValueError as e: # 通过检测是否超出存储资源限制，给模拟退火一个信号
+            # print(e)
+            return float('inf') 
     
     def run(self):
         for task_id in self.dag: 
@@ -183,6 +202,10 @@ class Simulator:
             yield self.env.process(self._master_process(task_id, self._compute_worker))
         elif task.type == 'data': 
             yield self.env.process(self._master_process(task_id, self._data_worker))
+            if task.children:
+                du_num = task.du_num if task.du_num > 0 else 1
+                for i in range(du_num):
+                    self.env.process(self._memory_free(task_id, i))
 
     def _master_process(self, task_id: str, worker_func):
         task = self.dag[task_id]
@@ -234,13 +257,41 @@ class Simulator:
         
         yield self.env.process(self._wait_for_parent_data(task_id, du_index, pipelined_parents, non_pipelined_parents))
 
-        storage_res_id = self.placement[task_id]; storage_bus = self.resources.get(storage_res_id)
+        storage_res_id = self.placement[task_id]
+        storage_resource = self.resources.get(storage_res_id)
         du_size = task.du_size if task.du_size > 0 else (task.data_size / (task.du_num or 1))
-        if du_size > 0 and storage_bus:
+        if du_size > 0 and storage_resource:
             # print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Starting storage op ({du_size:.2f} MB) on '{storage_res_id}'.")
-            yield storage_bus.transfer(du_size)
+            yield storage_resource.bus.transfer(du_size)
+            yield storage_resource.memory_container.put(du_size)
+            # print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index} finished storage op, allocating {du_size:.2f} MB memory.")
         self.task_du_done_events[task_id][du_index].succeed()
-        # print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Finished storage op.")
+
+    def _memory_free(self, task_id: str, du_index: int):
+        '''释放当前任务task_id占用的内存'''
+        task = self.dag[task_id]
+        storage_res_id = self.placement[task_id]
+        du_size = task.du_size if task.du_size > 0 else (task.data_size / (task.du_num or 1))
+
+        if not task.children or du_size <= 1e-9:
+            return
+
+        child_completion_events = []
+        for child_id in task.children:
+            child_task = self.dag[child_id]
+            child_du_num = child_task.du_num if child_task.du_num > 0 else 1
+            if child_du_num == task.du_num:
+                 child_completion_events.append(self.task_du_done_events[child_id][du_index])
+            else: # 不等，可能child需要所有du，要等待子任务所有du都完成
+                child_completion_events.extend(self.task_du_done_events[child_id])
+
+        unique_events = list(set(child_completion_events)) # 去重，如果所有子任务都需要父任务的所有du，child_completion_event有很多重复
+        yield simpy.AllOf(self.env, unique_events)
+        
+        # print(f"[{self.env.now:8.2f}] [Memory Free] All children consumed {task.id}-DU{du_index}, freeing {du_size:.2f} MB memory.")
+        storage_resource = self.resources.get(storage_res_id)
+        if storage_resource:
+            yield storage_resource.memory_container.get(du_size)
 
     def _wait_for_parent_data(self, task_id: str, du_index: int, pipelined_parents: List[str], non_pipelined_parents: List[str]):
         wait_for_events = []
