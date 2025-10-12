@@ -16,6 +16,10 @@ class PlacementOptimizer:
         self.storage_resources = self._get_resources_by_type('storage')
         self._build_resource_maps()
         self.avg_node_costs, self.avg_edge_costs = self._calculate_avg_costs_for_ranking()
+        # 预处理rank_u
+        self._compute_rank_u()
+        self.task_ranks = {task_id: task.rank_u for task_id, task in self.dag.items()}
+        self.sorted_tasks = sorted(self.dag.values(), key=lambda task: self.task_ranks[task.id], reverse=True)
 
     def _build_resource_maps(self):
         """预先计算从资源ID到DPU ID和资源对象的映射。"""
@@ -150,15 +154,15 @@ class PlacementOptimizer:
 
     def run_heft(self) -> Placement:
         # print("Running HEFT with Global Router for initial placement...")
-        self._compute_rank_u()
+        # self._compute_rank_u()
 
-        sorted_tasks_for_print = sorted(self.dag.values(), key=lambda t: t.rank_u, reverse=True)
+        # sorted_tasks_for_print = sorted(self.dag.values(), key=lambda t: t.rank_u, reverse=True)
         # print("\n--- Verifying Task Ranks (Top 5) ---")
         # for i in range(min(5, len(sorted_tasks_for_print))):
         #     task = sorted_tasks_for_print[i]
         #     print(f"  Rank {i+1}: Task='{task.id}' ('{task.name}'), rank_u={task.rank_u:.2f}")
         
-        sorted_tasks = list(sorted_tasks_for_print)
+        sorted_tasks = self.sorted_tasks
         
         placement: Placement = {}
         task_finish_time: Dict[str, float] = {}
@@ -240,9 +244,62 @@ class PlacementOptimizer:
         # print("\nHEFT finished.")
         return placement
 
+    def _random_method(self, placement: Placement) -> Placement:
+        '''旧方案，纯随机'''
+        new_placement = copy.deepcopy(placement)
+        task_to_move_id = random.choice(list(self.dag.keys()))
+        task_to_move = self.dag[task_to_move_id]
+
+        if task_to_move.type == 'compute':
+            new_resource = random.choice(self.compute_resources)
+            while new_resource == new_placement[task_to_move_id]:
+                new_resource = random.choice(self.compute_resources)
+        else: # 'data' task
+            new_resource = random.choice(self.storage_resources)
+            while new_resource == new_placement[task_to_move_id]:
+                new_resource = random.choice(self.storage_resources)
+        new_placement[task_to_move_id] = new_resource
+        return new_placement
+        
+    def _heuristic_method(self, placement: Placement) -> Placement:
+        '''启发式，离自己最大的父亲越近越好'''
+        new_placement = copy.deepcopy(placement)
+        ranks = [self.task_ranks[task.id] for task in self.sorted_tasks]
+        total_rank = sum(ranks)
+        weights = [rank / total_rank + 1e-6 for rank in ranks]
+        task_to_move_id = random.choices(self.sorted_tasks, k=1, weights=weights)[0].id
+        task_to_move = self.dag[task_to_move_id]
+
+        important_parent = None
+        max_data_size = -float('inf')
+        for parent_id in task_to_move.parents:
+            parent_task = self.dag[parent_id]
+            if parent_task.data_size > max_data_size:
+                max_data_size = parent_task.data_size
+                important_parent = parent_id
+        
+        if important_parent is not None:
+            parent_resource = placement[parent_id]
+            target_dpu = self._res_to_dpu_map.get(parent_resource)
+
+            resource_choices = []
+            resource_type = task_to_move.type
+            for res_id in self.network[target_dpu].resources:
+                if self._res_map[res_id].type == resource_type:
+                    resource_choices.append(res_id)
+            
+            if resource_choices:
+                new_resource = random.choice(resource_choices)
+                new_placement[task_to_move_id] = new_resource
+                return new_placement
+        
+        return self._random_method(placement)
+
     # 模拟退火
     def run_simulated_annealing(self, initial_placement: Placement,
-                                initial_temp=1000, final_temp=1, alpha=0.99, steps_per_temp=100) -> Placement:
+                                initial_temp=1000, final_temp=1, alpha=0.99, 
+                                steps_per_temp=100, heuristic_prob=0.7) -> Placement:
+        # heuristic_prob为random_method留有一定余地
         # print("Running Simulated Annealing for optimization...")
         current_placement = copy.deepcopy(initial_placement)
         
@@ -255,19 +312,11 @@ class PlacementOptimizer:
 
         while temp > final_temp:
             for _ in range(steps_per_temp):
-                new_placement = copy.deepcopy(current_placement)
-                task_to_move_id = random.choice(list(self.dag.keys()))
-                task_to_move = self.dag[task_to_move_id]
+                if random.random() < heuristic_prob:
+                    new_placement = self._heuristic_method(current_placement)
+                else:
+                    new_placement = self._random_method(current_placement)
 
-                if task_to_move.type == 'compute':
-                    new_resource = random.choice(self.compute_resources)
-                    while new_resource == new_placement[task_to_move_id]:
-                        new_resource = random.choice(self.compute_resources)
-                else: # 'data' task
-                    new_resource = random.choice(self.storage_resources)
-                    while new_resource == new_placement[task_to_move_id]:
-                        new_resource = random.choice(self.storage_resources)
-                new_placement[task_to_move_id] = new_resource
                 
                 simulator = Simulator(self.dag, new_placement, self.network, self.links, self.router)
                 new_cost = simulator.start_simulation()

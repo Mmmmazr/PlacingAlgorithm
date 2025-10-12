@@ -33,8 +33,10 @@ if __name__ == "__main__":
         initial_temp=1000,
         final_temp=1,
         alpha=0.95,
-        steps_per_temp=20
+        steps_per_temp=20,
+        heuristic_prob=0.0
     )
+    # 我试了一下，好像heuristic还没有纯随机好
     print_placement_details("\n--- Simulated Annealing Final Placement Result ---", final_placement, dag, optimizer)
     print("\n模拟退火执行完毕。\n")
 
