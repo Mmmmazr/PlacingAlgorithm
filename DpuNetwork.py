@@ -1,40 +1,37 @@
+import json
 from BasicDefinitions import DPU, Resource, Link
 from typing import Dict, List, Tuple
 
-def create_dpu_network(num_dpus: int) -> Tuple[Dict[str, DPU], Dict[str, Link]]:
+def create_dpu_network(json_path: str = r'C:\code\PlacingAlgorithm\DpuNetwork.json') -> Tuple[Dict[str, DPU], Dict[str, Link]]:
     """
     创建DPU网络，每个DPU内部资源全连接，DPU之间也全连接。
     """
     dpus = {}
     links = {}
 
-    # 创建DPU及其内部资源、链路
-    for i in range(1, num_dpus + 1):
-        dpu_id = f"dpu{i}"
-        resources = {}
-        resources[f"{dpu_id}_arm"] = Resource(id=f"{dpu_id}_arm", name='arm', type='compute', capacity=16)
-        resources[f"{dpu_id}_dpa"] = Resource(id=f"{dpu_id}_dpa", name='dpa', type='compute', capacity=256)
-        resources[f"{dpu_id}_dram"] = Resource(id=f"{dpu_id}_dram", name='dram', type='storage', bandwidth_mbps=240000, memory=128)
-        resources[f"{dpu_id}_ssd"] = Resource(id=f"{dpu_id}_ssd", name='ssd', type='storage', bandwidth_mbps=40000, memory=1024)
-        resources[f"{dpu_id}_nic"] = Resource(id=f"{dpu_id}_nic", name='nic', type='communicate', bandwidth_mbps=100000)
-        
-        # 创建DPU内部NoC的连接
-        noc_edges = []
-        resource_ids = list(resources.keys())
-        for m in range(len(resource_ids)):
-            for n in range(m + 1, len(resource_ids)):
-                noc_edges.append((resource_ids[m], resource_ids[n]))
-        
-        dpus[dpu_id] = DPU(id=dpu_id, resources=resources, noc=noc_edges)
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
 
-    # DPU间的链路
-    dpu_ids = list(dpus.keys())
-    for i in range(len(dpu_ids)):
-        for j in range(i + 1, len(dpu_ids)):
-            dpu_a = dpu_ids[i]
-            dpu_b = dpu_ids[j]
-            link_id = f"link_{dpu_a}_{dpu_b}"
-            links[link_id] = Link(id=link_id, source_dpu=dpu_a, dest_dpu=dpu_b, bandwidth_gbps=200)
+    for dpu in data:
+        resources = {}
+        for resource in dpu['resources']:
+            type = resource['type']
+            if type == 'compute':
+                resources[resource['resource_id']] = Resource(id=resource['resource_id'], name=resource['name'], type=type, capacity=resource['capacity'])
+            elif type == 'storage':
+                resources[resource['resource_id']] = Resource(id=resource['resource_id'], name=resource['name'], type=type, memory=resource['memory'], bandwidth_mbps=resource['bandwidth_mbps'])
+            else:
+                resources[resource['resource_id']] = Resource(id=resource['resource_id'], name=resource['name'], type=type, bandwidth_mbps=resource['bandwidth_mbps'])
+
+        noc_edges = []
+        for edge in dpu['noc']:
+            noc_edges.append((edge[0], edge[1]))
+
+        dpus[dpu['dpu_id']] = DPU(id=dpu['dpu_id'], resources=resources, noc=noc_edges)
+
+        for neighbor in dpu['neighbors']:
+            link_id = f"link_{dpu['dpu_id']}_{neighbor}"
+            links[link_id] = Link(id=link_id, source_dpu=dpu['dpu_id'], dest_dpu=neighbor['id'], bandwidth_gbps=neighbor['bandwidth_gbps'])
             
     # print(f"成功创建了一个包含 {len(dpus)} 个DPU和 {len(links)} 条链路的全连接网络。")
     return dpus, links
@@ -55,5 +52,5 @@ def print_dpu_network(dpus, links):
         print(f"  {link_id}: {link.source_dpu} <-> {link.dest_dpu}, 带宽: {link.bandwidth_gbps}Gbps")
 
 if __name__ == "__main__":
-    dpus, links = create_dpu_network(4)
+    dpus, links = create_dpu_network()
     print_dpu_network(dpus, links)

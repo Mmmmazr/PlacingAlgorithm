@@ -13,7 +13,7 @@ def print_placement_details(title, placement, dag, optimizer):
 if __name__ == "__main__":
     print("[PHASE 1] 初始化任务图和DPU网络...")
     dag = create_workflow_dag()
-    network, links = create_dpu_network(num_dpus=4)
+    network, links = create_dpu_network()
     optimizer = PlacementOptimizer(dag, network, links)
     print("初始化完成。\n")
 
