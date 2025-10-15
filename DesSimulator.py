@@ -157,7 +157,7 @@ class Simulator:
         '''
         self.env = simpy.Environment()
         self.resources = {}
-        NOC_BANDWIDTH_MBPS = 100_000
+        from BasicDefinitions import NOC_BANDWIDTH_MBPS
         for dpu_id, dpu in self.network.items():
             self.resources[f"{dpu_id}_noc_bus"] = SharedBus(self.env, f"{dpu_id}_noc_bus", NOC_BANDWIDTH_MBPS)
             for res in dpu.resources.values():
@@ -166,11 +166,11 @@ class Simulator:
                     for i in range(res.capacity):
                         core_pool.put(f"core_{i}")
                     self.resources[res.id] = core_pool
-                elif res.type == 'storage' and res.bandwidth_mbps > 0: 
-                    self.resources[res.id] = StorageResource(self.env, res.id, res.bandwidth_mbps, res.memory)
+                elif res.type == 'storage' and res.bandwidth_MBps > 0: 
+                    self.resources[res.id] = StorageResource(self.env, res.id, res.bandwidth_MBps, res.memory)
         
         for link in self.links.values():
-            bandwidth_MBps = link.bandwidth_gbps * 125
+            bandwidth_MBps = link.bandwidth_MBps
             link_key = tuple(sorted((f"{link.source_dpu}_nic", f"{link.dest_dpu}_nic"))) # 保证link_key唯一
             self.resources[link_key] = SharedBus(self.env, link.id, bandwidth_MBps)
             

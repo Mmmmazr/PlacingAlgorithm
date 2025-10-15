@@ -4,9 +4,9 @@
     "resources": [
       { "resource_id": "dpu1_arm", "name": "arm", "type": "compute", "capacity": 16 },
       { "resource_id": "dpu1_dpa", "name": "dpa", "type": "compute", "capacity": 256 },
-      { "resource_id": "dpu1_dram", "name": "dram", "type": "storage", "bandwidth_mbps": 240000, "memory": 128 },
-      { "resource_id": "dpu1_ssd", "name": "ssd", "type": "storage", "bandwidth_mbps": 40000, "memory": 1024 },
-      { "resource_id": "dpu1_nic", "name": "nic", "type": "communicate", "bandwidth_mbps": 100000 }
+      { "resource_id": "dpu1_dram", "name": "dram", "type": "storage", "bandwidth_MBps": 30000, "memory": 128},
+      { "resource_id": "dpu1_ssd", "name": "ssd", "type": "storage", "bandwidth_MBps": 5000, "memory": 1024},
+      { "resource_id": "dpu1_nic", "name": "nic", "type": "communicate", "bandwidth_MBps": 12500}
     ],
     "noc": [
       ["dpu1_arm", "dpu1_dpa"], ["dpu1_dpa", "dpu1_arm"],
@@ -21,9 +21,9 @@
       ["dpu1_ssd", "dpu1_nic"], ["dpu1_nic", "dpu1_ssd"]
     ],
     "neighbors": [
-      {"id": "dpu2", "bandwidth_gbps": 200}, 
-      {"id": "dpu3", "bandwidth_gbps": 200},
-      {"id": "dpu4", "bandwidth_gbps": 200}
+      {"id": "dpu2", "bandwidth_MBps": 200000}, 
+      {"id": "dpu3", "bandwidth_MBps": 200000},
+      {"id": "dpu4", "bandwidth_MBps": 200000}
     ]
   },
   {
@@ -31,9 +31,9 @@
     "resources": [
       { "resource_id": "dpu2_arm", "name": "arm", "type": "compute", "capacity": 16 },
       { "resource_id": "dpu2_dpa", "name": "dpa", "type": "compute", "capacity": 256 },
-      { "resource_id": "dpu2_dram", "name": "dram", "type": "storage", "bandwidth_mbps": 240000, "memory": 128 },
-      { "resource_id": "dpu2_ssd", "name": "ssd", "type": "storage", "bandwidth_mbps": 40000, "memory": 1024 },
-      { "resource_id": "dpu2_nic", "name": "nic", "type": "communicate", "bandwidth_mbps": 100000 }
+      { "resource_id": "dpu2_dram", "name": "dram", "type": "storage", "bandwidth_MBps": 30000, "memory": 128 },
+      { "resource_id": "dpu2_ssd", "name": "ssd", "type": "storage", "bandwidth_MBps": 5000, "memory": 1024 },
+      { "resource_id": "dpu2_nic", "name": "nic", "type": "communicate", "bandwidth_MBps": 12500 }
     ],
     "noc": [
       ["dpu2_arm", "dpu2_dpa"], ["dpu2_dpa", "dpu2_arm"],
@@ -48,9 +48,9 @@
       ["dpu2_ssd", "dpu2_nic"], ["dpu2_nic", "dpu2_ssd"]
     ],
     "neighbors": [
-      {"id": "dpu1", "bandwidth_gbps": 200}, 
-      {"id": "dpu3", "bandwidth_gbps": 200},
-      {"id": "dpu4", "bandwidth_gbps": 200}
+      {"id": "dpu1", "bandwidth_MBps": 200000}, 
+      {"id": "dpu3", "bandwidth_MBps": 200000},
+      {"id": "dpu4", "bandwidth_MBps": 200000}
     ]
   },
   {
@@ -58,9 +58,9 @@
     "resources": [
       { "resource_id": "dpu3_arm", "name": "arm", "type": "compute", "capacity": 16 },
       { "resource_id": "dpu3_dpa", "name": "dpa", "type": "compute", "capacity": 256 },
-      { "resource_id": "dpu3_dram", "name": "dram", "type": "storage", "bandwidth_mbps": 240000, "memory": 128 },
-      { "resource_id": "dpu3_ssd", "name": "ssd", "type": "storage", "bandwidth_mbps": 40000, "memory": 1024 },
-      { "resource_id": "dpu3_nic", "name": "nic", "type": "communicate", "bandwidth_mbps": 100000 }
+      { "resource_id": "dpu3_dram", "name": "dram", "type": "storage", "bandwidth_MBps": 30000, "memory": 128 },
+      { "resource_id": "dpu3_ssd", "name": "ssd", "type": "storage", "bandwidth_MBps": 5000, "memory": 1024 },
+      { "resource_id": "dpu3_nic", "name": "nic", "type": "communicate", "bandwidth_MBps": 12500 }
     ],
     "noc": [
       ["dpu3_arm", "dpu3_dpa"], ["dpu3_dpa", "dpu3_arm"],
@@ -75,9 +75,9 @@
       ["dpu3_ssd", "dpu3_nic"], ["dpu3_nic", "dpu3_ssd"]
     ],
     "neighbors": [
-      {"id": "dpu1", "bandwidth_gbps": 200}, 
-      {"id": "dpu2", "bandwidth_gbps": 200},
-      {"id": "dpu4", "bandwidth_gbps": 200}
+      {"id": "dpu1", "bandwidth_MBps": 200000}, 
+      {"id": "dpu2", "bandwidth_MBps": 200000},
+      {"id": "dpu4", "bandwidth_MBps": 200000}
     ]
   },
   {
@@ -85,9 +85,9 @@
     "resources": [
       { "resource_id": "dpu4_arm", "name": "arm", "type": "compute", "capacity": 16 },
       { "resource_id": "dpu4_dpa", "name": "dpa", "type": "compute", "capacity": 256 },
-      { "resource_id": "dpu4_dram", "name": "dram", "type": "storage", "bandwidth_mbps": 240000, "memory": 128 },
-      { "resource_id": "dpu4_ssd", "name": "ssd", "type": "storage", "bandwidth_mbps": 40000, "memory": 1024 },
-      { "resource_id": "dpu4_nic", "name": "nic", "type": "communicate", "bandwidth_mbps": 100000 }
+      { "resource_id": "dpu4_dram", "name": "dram", "type": "storage", "bandwidth_MBps": 30000, "memory": 128 },
+      { "resource_id": "dpu4_ssd", "name": "ssd", "type": "storage", "bandwidth_MBps": 5000, "memory": 1024 },
+      { "resource_id": "dpu4_nic", "name": "nic", "type": "communicate", "bandwidth_MBps": 12500 }
     ],
     "noc": [
       ["dpu4_arm", "dpu4_dpa"], ["dpu4_dpa", "dpu4_arm"],
@@ -102,9 +102,9 @@
       ["dpu4_ssd", "dpu4_nic"], ["dpu4_nic", "dpu4_ssd"]
     ],
     "neighbors": [
-      {"id": "dpu1", "bandwidth_gbps": 200}, 
-      {"id": "dpu2", "bandwidth_gbps": 200},
-      {"id": "dpu3", "bandwidth_gbps": 200}
+      {"id": "dpu1", "bandwidth_MBps": 200000}, 
+      {"id": "dpu2", "bandwidth_MBps": 200000},
+      {"id": "dpu3", "bandwidth_MBps": 200000}
     ]
   }
 ]

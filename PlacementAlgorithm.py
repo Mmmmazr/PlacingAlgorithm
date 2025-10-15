@@ -15,14 +15,14 @@ class PlacementOptimizer:
         self.compute_resources = self._get_resources_by_type('compute')
         self.storage_resources = self._get_resources_by_type('storage')
         self._build_resource_maps()
-        self.avg_node_costs, self.avg_edge_costs = self._calculate_avg_costs_for_ranking()
+        self.avg_node_costs, self.avg_edge_costs = self._calculate_avg_costs()
         # 预处理rank_u
         self._compute_rank_u()
         self.task_ranks = {task_id: task.rank_u for task_id, task in self.dag.items()}
         self.sorted_tasks = sorted(self.dag.values(), key=lambda task: self.task_ranks[task.id], reverse=True)
 
     def _build_resource_maps(self):
-        """预先计算从资源ID到DPU ID和资源对象的映射。"""
+        """计算从资源ID到DPU ID和资源对象的映射"""
         self._res_to_dpu_map: Dict[str, str] = {}
         self._res_map: Dict[str, Resource] = {}
         for dpu in self.network.values():
@@ -39,12 +39,14 @@ class PlacementOptimizer:
                     res_list.append(r.id)
         return res_list
 
-    def _calculate_avg_costs_for_ranking(self):
+    def _calculate_avg_costs(self):
         storage_bws, link_bws = [], []
         for dpu in self.network.values():
             for res in dpu.resources.values():
-                if res.type == 'storage' and res.bandwidth_mbps > 0: storage_bws.append(res.bandwidth_mbps)
-        for link in self.links.values(): link_bws.append(link.bandwidth_gbps * 125)
+                if res.type == 'storage' and res.bandwidth_MBps > 0: 
+                    storage_bws.append(res.bandwidth_MBps)
+        for link in self.links.values(): 
+            link_bws.append(link.bandwidth_MBps)
         avg_storage_bw = sum(storage_bws) / len(storage_bws) if storage_bws else 1
         avg_link_bw = sum(link_bws) / len(link_bws) if link_bws else 1
         avg_node_costs = {}
@@ -71,7 +73,7 @@ class PlacementOptimizer:
 
     def _calculate_data_arrival_time(self, parent_id: str, child_res_id: str,
                                        placement: Placement, task_finish_time: Dict) -> float:
-        """计算数据到达时间。(未考虑链路争用)"""
+        """计算数据到达时间(还没考虑链路争用)"""
         data_ready_time = task_finish_time.get(parent_id, 0)
         parent_task = self.dag[parent_id]
         data_size = parent_task.data_size
@@ -97,13 +99,13 @@ class PlacementOptimizer:
             if u_dpu == v_dpu:
                 base_u_id = '_'.join(u_id.split('_')[:-1]) if u_id.rsplit('_', 1)[-1].isdigit() else u_id
                 u_res = self._res_map.get(base_u_id)
-                current_bw = u_res.internal_bandwidth_mbps if u_res else float('inf')
+                current_bw = u_res.internal_bandwidth_MBps if u_res else float('inf')
             else:
                 link_key = f"link_{u_dpu}_{v_dpu}"
                 rev_link_key = f"link_{v_dpu}_{u_dpu}"
                 link = self.links.get(link_key) or self.links.get(rev_link_key)
                 if link:
-                    current_bw = link.bandwidth_gbps * 125 
+                    current_bw = link.bandwidth_MBps
             
             bottleneck_bw_mbps = min(bottleneck_bw_mbps, current_bw)
         
@@ -116,13 +118,13 @@ class PlacementOptimizer:
 
     def _get_execution_time(self, task: Task, resource_id: str) -> float: # 重载后可根据resource_id的类型（如dpa vs arm）进行性能调整
         if task.type == 'compute':
-            compute_workload = {'linear': 10, 'slice': 2, 'rope': 15, 'view': 1, 'einsum': 25, 'add': 2, 'softmax': 8}
+            compute_workload = {'linear': 10, 'slice': 2, 'rope': 15, 'view': 1, 'einsum': 25, 'add': 2, 'softmax': 8} # 单位us
             return float(compute_workload.get(task.compute_type, 5))
         else: # 'data'
             base_res_id = '_'.join(resource_id.split('_')[:-1]) if resource_id.rsplit('_', 1)[-1].isdigit() else resource_id
             storage_resource = self._res_map.get(base_res_id)
-            if storage_resource and storage_resource.bandwidth_mbps > 0:
-                return (task.data_size / storage_resource.bandwidth_mbps) * 1e6
+            if storage_resource and storage_resource.bandwidth_MBps > 0:
+                return (task.data_size / storage_resource.bandwidth_MBps) * 1e6
             return 0.0
 
     def _get_peak_memory_usage(self, existing_intervals: List[Tuple[float, float, float]],
@@ -384,7 +386,7 @@ def create_complex_test_environment():
         "dpu0": DPU(
             id="dpu0",
             resources={
-                "dpu0_dram": Resource("dpu0_dram", "dram", "storage", bandwidth_mbps=20000),
+                "dpu0_dram": Resource("dpu0_dram", "dram", "storage", bandwidth_MBps=20000),
                 "dpu0_dpa": Resource("dpu0_dpa", "dpa", "compute", capacity=1), # 高性能计算
                 "dpu0_nic": Resource("dpu0_nic", "nic", "communication")
             },
@@ -394,7 +396,7 @@ def create_complex_test_environment():
         "dpu1": DPU(
             id="dpu1",
             resources={
-                "dpu1_dram": Resource("dpu1_dram", "dram", "storage", bandwidth_mbps=20000),
+                "dpu1_dram": Resource("dpu1_dram", "dram", "storage", bandwidth_MBps=20000),
                 "dpu1_arm": Resource("dpu1_arm", "arm", "compute", capacity=1), # 普通性能计算
                 "dpu1_nic": Resource("dpu1_nic", "nic", "communication")
             },

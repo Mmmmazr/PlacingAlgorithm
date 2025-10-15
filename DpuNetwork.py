@@ -19,9 +19,9 @@ def create_dpu_network(json_path: str = r'C:\code\PlacingAlgorithm\DpuNetwork.js
             if type == 'compute':
                 resources[resource['resource_id']] = Resource(id=resource['resource_id'], name=resource['name'], type=type, capacity=resource['capacity'])
             elif type == 'storage':
-                resources[resource['resource_id']] = Resource(id=resource['resource_id'], name=resource['name'], type=type, memory=resource['memory'], bandwidth_mbps=resource['bandwidth_mbps'])
+                resources[resource['resource_id']] = Resource(id=resource['resource_id'], name=resource['name'], type=type, memory=resource['memory'], bandwidth_MBps=resource['bandwidth_MBps'])
             else:
-                resources[resource['resource_id']] = Resource(id=resource['resource_id'], name=resource['name'], type=type, bandwidth_mbps=resource['bandwidth_mbps'])
+                resources[resource['resource_id']] = Resource(id=resource['resource_id'], name=resource['name'], type=type, bandwidth_MBps=resource['bandwidth_MBps'])
 
         noc_edges = []
         for edge in dpu['noc']:
@@ -31,7 +31,7 @@ def create_dpu_network(json_path: str = r'C:\code\PlacingAlgorithm\DpuNetwork.js
 
         for neighbor in dpu['neighbors']:
             link_id = f"link_{dpu['dpu_id']}_{neighbor}"
-            links[link_id] = Link(id=link_id, source_dpu=dpu['dpu_id'], dest_dpu=neighbor['id'], bandwidth_gbps=neighbor['bandwidth_gbps'])
+            links[link_id] = Link(id=link_id, source_dpu=dpu['dpu_id'], dest_dpu=neighbor['id'], bandwidth_MBps=neighbor['bandwidth_MBps'])
             
     # print(f"成功创建了一个包含 {len(dpus)} 个DPU和 {len(links)} 条链路的全连接网络。")
     return dpus, links

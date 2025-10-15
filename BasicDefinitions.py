@@ -10,8 +10,8 @@ class Resource:
     type: str # 'compute', 'storage' or 'communicate'
     capacity: int = 1
     memory: float = 0.0 # in GB
-    internal_bandwidth_mbps: float = 800000 # NoC内部传输带宽， 假设NoC等效带宽 800GB/s 
-    bandwidth_mbps: float = 0 # Mbps
+    internal_bandwidth_MBps: float = 800000 # NoC内部传输带宽， 假设NoC等效带宽 800GB/s 
+    bandwidth_MBps: float = 0 # MBps
 
 @dataclass
 class DPU:
@@ -19,13 +19,15 @@ class DPU:
     noc: List[Tuple[str, str]] = field(default_factory=list) 
     resources: Dict[str, Resource] = field(default_factory=dict)
 
+NOC_BANDWIDTH_MBPS = 1000000 # 假定为1000GB/s的noc连接
+
 @dataclass
 class Link:
     """DPU间的网络连接"""
     id: str
     source_dpu: str
     dest_dpu: str
-    bandwidth_gbps: float = 100.0
+    bandwidth_MBps: float = 100000.0
     latency_us: float = 1.0
 
 #定义数据层面的DAG任务图
