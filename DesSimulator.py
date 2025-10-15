@@ -65,7 +65,7 @@ class SharedBus:
     def __init__(self, env, name, bandwidth_MBps):
         self.env = env
         self.name = name
-        self.bandwidth_MB_us = bandwidth_MBps / 1e6 #所有的时间单位都以us计算
+        self.bandwidth_MB_us = bandwidth_MBps / 1e6 # 所有的时间单位都以us计算
         self.active_transfers = []
         self.process = env.process(self.run())
         self.wakeup_event = env.event()
@@ -79,18 +79,24 @@ class SharedBus:
             if time_passed > 1e-9 and self.num_active_at_last_update > 0:
                 effective_bw = self.bandwidth_MB_us / self.num_active_at_last_update
                 data_transferred = effective_bw * time_passed
-                for t in self.active_transfers: t['remaining'] -= data_transferred
+                for t in self.active_transfers: 
+                    if not t.get('is_new', False):
+                        t['remaining'] -= data_transferred
+
             new_active_list = []
             for t in self.active_transfers:
                 if t['remaining'] > 1e-9: 
+                    t['is_new'] = False
                     new_active_list.append(t)
                 else:
                     t['remaining'] = 0
                     if not t['event'].triggered: 
                         t['event'].succeed()
             self.active_transfers = new_active_list
+
             self.time_of_last_update = self.env.now
             self.num_active_at_last_update = len(self.active_transfers)
+
             try:
                 if not self.active_transfers:
                     yield self.wakeup_event # 进程挂起，wakeup_event.succeed()唤醒
@@ -108,9 +114,12 @@ class SharedBus:
     def transfer(self, data_size_mb):
         if data_size_mb <= 1e-9: 
             return self.env.timeout(0)
+        
+        print(f"[{self.env.now:8.2f}] [Bus: {self.name}] New transfer request for {data_size_mb:.2f} MB.")
+
         completion_event = self.env.event()
         was_idle = (len(self.active_transfers) == 0)
-        self.active_transfers.append({'remaining': data_size_mb, 'event': completion_event})
+        self.active_transfers.append({'remaining': data_size_mb, 'event': completion_event, 'is_new': True})
         if not self.process.is_alive: 
             self.process = self.env.process(self.run())
         if was_idle: #空
@@ -226,7 +235,13 @@ class Simulator:
 
     def _compute_worker(self, task_id: str, du_index: int, pipelined_parents: List[str], non_pipelined_parents: List[str]):
         task = self.dag[task_id]
+
+        print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Waiting for parent data.")
+
         yield self.env.process(self._wait_for_parent_data(task_id, du_index, pipelined_parents, non_pipelined_parents))
+        
+        print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Parent data arrived. Requesting compute resource.")
+        
         compute_res_id = self.placement[task_id]
         compute_resource_pool = self.resources[compute_res_id]
         # get workload
@@ -239,33 +254,48 @@ class Simulator:
         
         core_token = yield compute_resource_pool.get()  # 请求一个核心
         try:
-            # print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Got core, starting compute on '{compute_res_id}'.")
+            print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Got core, starting compute on '{compute_res_id}' for {du_compute_time:.2f} us.")
             if du_compute_time > 0:
                 yield self.env.timeout(du_compute_time)
         finally:
-            # print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Computation done, returning core.")
+            print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Computation done, returning core.")
             yield compute_resource_pool.put(core_token) # 归还核心
 
         self.task_du_done_events[task_id][du_index].succeed()
 
+        print(f"[{self.env.now:8.2f}] [Event] Task '{task.id}' DU-{du_index} finished. Event succeeded.")
+
     def _data_worker(self, task_id: str, du_index: int, pipelined_parents: List[str], non_pipelined_parents: List[str]):
         task = self.dag[task_id]
         if not task.parents:
-            du_interval = getattr(task, 'du_interval_us', 0)
+            du_interval = getattr(task, 'du_interval', 0)
             if du_interval > 0 and du_index > 0:
                 yield self.env.timeout(du_index * du_interval)
-        
+                print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: start transfer.")
+
+        if task.parents:
+            print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Waiting for parent data.")
+
         yield self.env.process(self._wait_for_parent_data(task_id, du_index, pipelined_parents, non_pipelined_parents))
+
+        if task.parents:
+             print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Parent data arrived.")
 
         storage_res_id = self.placement[task_id]
         storage_resource = self.resources.get(storage_res_id)
         du_size = task.du_size if task.du_size > 0 else (task.data_size / (task.du_num or 1))
         if du_size > 0 and storage_resource:
-            # print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Starting storage op ({du_size:.2f} MB) on '{storage_res_id}'.")
+
+            print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Starting storage op ({du_size:.2f} MB) on '{storage_res_id}'.")
+            
             yield storage_resource.bus.transfer(du_size)
             yield storage_resource.memory_container.put(du_size)
-            # print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index} finished storage op, allocating {du_size:.2f} MB memory.")
+            
+            print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index} finished storage op, allocating {du_size:.2f} MB memory.")
+        
         self.task_du_done_events[task_id][du_index].succeed()
+
+        print(f"[{self.env.now:8.2f}] [Event] Task '{task.id}' DU-{du_index} finished. Event succeeded.")
 
     def _memory_free(self, task_id: str, du_index: int):
         '''释放当前任务task_id占用的内存'''
@@ -288,7 +318,8 @@ class Simulator:
         unique_events = list(set(child_completion_events)) # 去重，如果所有子任务都需要父任务的所有du，child_completion_event有很多重复
         yield simpy.AllOf(self.env, unique_events)
         
-        # print(f"[{self.env.now:8.2f}] [Memory Free] All children consumed {task.id}-DU{du_index}, freeing {du_size:.2f} MB memory.")
+        print(f"[{self.env.now:8.2f}] [Memory Free] All children consumed '{task.id}'-DU{du_index}, freeing {du_size:.2f} MB from '{storage_res_id}'.")
+        
         storage_resource = self.resources.get(storage_res_id)
         if storage_resource:
             yield storage_resource.memory_container.get(du_size)
@@ -323,10 +354,18 @@ class Simulator:
             yield self.du_arrival_stores[source_id][dest_id][du_index].put(True)
             return
         
+        print(f"[{self.env.now:8.2f}] [Transfer] Waiting for source '{source_id}'-DU{du_index} to be ready.")
+
         yield self.task_du_done_events[source_id][du_index]
+
+        print(f"[{self.env.now:8.2f}] [Transfer] Source '{source_id}'-DU{du_index} is ready. Starting transfer to '{dest_id}'.")
+
         source_res_id = self.placement[source_id]
         dest_res_id = self.placement[dest_id]
         comm_path = self.router.get_path(source_res_id, dest_res_id)
+
+        print(f"[{self.env.now:8.2f}] [Transfer] Path for '{source_id}'-DU{du_index} -> '{dest_id}': {' -> '.join(comm_path)}")
+
         for j in range(len(comm_path) - 1):
             u_res, v_res = comm_path[j], comm_path[j+1]
             u_dpu = self._get_resource_dpu_id(u_res); v_dpu = self._get_resource_dpu_id(v_res)
@@ -336,83 +375,51 @@ class Simulator:
             else:
                 link_key = tuple(sorted((f"{u_dpu}_nic", f"{v_dpu}_nic")))
                 bus_resource = self.resources.get(link_key)
-            if bus_resource: 
+            if bus_resource:
+                
+                print(f"[{self.env.now:8.2f}] [Transfer] DU-{du_index} ({du_size:.2f} MB) entering bus from '{u_res}' to '{v_res}'.")
+                
                 yield bus_resource.transfer(du_size)
+
+                print(f"[{self.env.now:8.2f}] [Transfer] DU-{du_index} ({du_size:.2f} MB) exited bus from '{u_res}' to '{v_res}'.")
+            
             elif u_dpu != v_dpu: 
                 print(f"Warning: No bus resource found for transfer from {u_res} to {v_res}")
+        
         if self.du_arrival_stores[source_id][dest_id][du_index] is None:
             self.du_arrival_stores[source_id][dest_id][du_index] = simpy.Store(self.env, capacity=1)
+        
+        print(f"[{self.env.now:8.2f}] [Transfer] DU-{du_index} from '{source_id}' has arrived at destination for '{dest_id}'.")
+        
         yield self.du_arrival_stores[source_id][dest_id][du_index].put(True)
 
-
 if __name__ == '__main__':
+    # 导入所需的创建函数
+    from DpuNetwork import create_dpu_network
+    from TaskGraph import create_workflow_dag
+    
     def run_simulator_verification_test():
-        print("\n" + "="*50)
-        print("Running Standalone Verification Test for DesSimulator (Corrected Interval Logic)")
-        print("="*50)
 
-        # 【已修改】测试用例: A (source) -> B (intermediate data) -> C (compute)
-        # A是源头，应用du_interval。B是中间节点，不应用。
-        dag: Dict[str, Task] = {
-            "T_A": Task(id="T_A", name="Source", type='data', data_size=50.0, du_size=25.0, du_num=2, children=["T_B"]),
-            "T_B": Task(id="T_B", name="IntermediateStore", type='data', data_size=50.0, du_size=25.0, du_num=2, parents=["T_A"], children=["T_C"]),
-            "T_C": Task(id="T_C", name="Process", type='compute', data_size=0, du_size=0, du_num=2, compute_type='linear', parents=["T_B"])
+        network, links = create_dpu_network(r"C:\code\PlacingAlgorithm\test_cases\DpuNetwork1.json")
+        dag = create_workflow_dag(r"C:\code\PlacingAlgorithm\test_cases\TaskGraph1.json")
+
+        setattr(dag["T_B"], 'workload', 20.0) # 每个DU计算10us
+        setattr(dag["T_D"], 'workload', 30.0) # 每个DU计算15us
+        setattr(dag['T_A'], 'du_interval', 10.0) # source data间隔10us发出
+
+        placement: Placement = {
+            "T_A": "dpu1_dram",
+            "T_B": "dpu1_arm",
+            "T_C": "dpu1_dram",
+            "T_D": "dpu2_arm"
         }
-        # 只有源头节点A有du_interval
-        setattr(dag["T_A"], 'du_interval_us', 10.0) 
-        # T_B不设置du_interval
-        setattr(dag["T_C"], 'workload', 20.0) # 每个DU计算10us
-
-        dram_bw = 20_000; noc_bw = 100_000
-        network: Dict[str, DPU] = {
-            "dpu1": DPU("dpu1", resources={"dpu1_dram": Resource("dpu1_dram", "dram", "storage", bandwidth_mbps=dram_bw), "dpu1_arm": Resource("dpu1_arm", "arm", "compute", capacity=1)}, noc=[("dpu1_dram", "dpu1_arm")])
-        }
-        links: Dict[str, Link] = {}
-        # 所有任务都在同一个DPU内，简化传输，聚焦于du_interval逻辑
-        placement: Placement = {"T_A": "dpu1_dram", "T_B": "dpu1_dram", "T_C": "dpu1_arm"}
-
-        # --- Theoretical Calculation ---
-        # T_A (Source)
-        du_size_A = 25.0; interval_A = 10.0; time_dram_du_A = (du_size_A / dram_bw) * 1e6 # 1250 us
-        du0_A_done = time_dram_du_A # 1250
-        du1_A_start = max(interval_A, du0_A_done) # max(10, 1250) = 1250
-        du1_A_done = du1_A_start + time_dram_du_A # 1250 + 1250 = 2500
-
-        # T_B (Intermediate), no interval, triggered by T_A's completion
-        time_transfer_A_to_B = 0 # Same resource
-        du_size_B = 25.0; time_dram_du_B = (du_size_B / dram_bw) * 1e6 # 1250 us
-        du0_B_start = du0_A_done + time_transfer_A_to_B # 1250
-        du0_B_done = du0_B_start + time_dram_du_B # 2500
-        du1_B_start = max(du1_A_done + time_transfer_A_to_B, du0_B_done) # max(2500, 2500) = 2500
-        du1_B_done = du1_B_start + time_dram_du_B # 2500 + 1250 = 3750
-
-        # T_C (Compute)
-        time_transfer_B_to_C_du = (du_size_B / noc_bw) * 1e6 # 250 us
-        time_compute_du = 20.0 / 2 # 10 us
-        du0_C_arrival = du0_B_done + time_transfer_B_to_C_du # 2500 + 250 = 2750
-        du0_C_done = du0_C_arrival + time_compute_du # 2760
-        du1_C_arrival = du1_B_done + time_transfer_B_to_C_du # 3750 + 250 = 4000
-        du1_C_start = max(du1_C_arrival, du0_C_done) # max(4000, 2760) = 4000
-        expected_makespan = du1_C_start + time_compute_du # 4010
         
-        print(f"--- Theoretical Calculation (Corrected Interval Logic) ---")
-        print(f"  - T_B DU-0 starts its work at: {du0_B_start:.2f} us (driven by T_A completion)")
-        print(f"  - T_B DU-1 starts its work at: {du1_B_start:.2f} us (driven by T_A completion and resource availability)")
-        print(f"  Expected Makespan: {expected_makespan:.2f} us")
-        
-        print("\n--- Simulation Log ---")
+        print("\n--- Log ---")
         router = GlobalRouter(network, links)
         simulator = Simulator(dag, placement, network, links, router)
         simulated_makespan = simulator.start_simulation()
 
-        print(f"\n--- Simulation Result ---")
-        print(f"  Simulated Makespan: {simulated_makespan:.2f} us")
+        print("\n--- Result ---")
+        print(f" {simulated_makespan:.2f} us")
 
-        tolerance = 0.01 
-        if math.isclose(expected_makespan, simulated_makespan, rel_tol=tolerance):
-            print("\n[SUCCESS] Simulated makespan matches the expected value within tolerance.")
-        else:
-            print(f"\n[FAILURE] Simulated makespan ({simulated_makespan:.2f}) differs significantly from expected value ({expected_makespan:.2f}).")
-        print("="*50)
-        
     run_simulator_verification_test()

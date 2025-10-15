@@ -1,0 +1,40 @@
+[
+  {
+    "id": "T_A",
+    "name": "Source Data",
+    "type": "data",
+    "data_size": 20.0,
+    "du_num": 2,
+    "du_size": 10.0,
+    "child": ["T_B"]
+  },
+  {
+    "id": "T_B",
+    "name": "Process on DPU1",
+    "type": "compute",
+    "compute_type": "linear",
+    "data_size": 10.0,
+    "du_num": 2,
+    "du_size": 5.0,
+    "child": ["T_C"]
+  },
+  {
+    "id": "T_C",
+    "name": "Source Data",
+    "type": "data",
+    "data_size": 10.0,
+    "du_num": 2,
+    "du_size": 5.0,
+    "child": ["T_D"]
+  },
+  {
+    "id": "T_D",
+    "name": "Process on DPU2",
+    "type": "compute",
+    "compute_type": "einsum",
+    "data_size": 0,
+    "du_num": 2,
+    "du_size": 0,
+    "child": []
+  }
+]
