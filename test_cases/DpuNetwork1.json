@@ -2,8 +2,8 @@
   {
     "dpu_id": "dpu1",
     "resources": [
-      { "resource_id": "dpu1_arm", "name": "arm", "type": "compute", "capacity": 1 },
-      { "resource_id": "dpu1_dram", "name": "dram", "type": "storage", "bandwidth_MBps": 20000, "memory": 15},
+      { "resource_id": "dpu1_arm", "name": "arm", "type": "compute", "capacity": 4 },
+      { "resource_id": "dpu1_dram", "name": "dram", "type": "storage", "bandwidth_MBps": 20000, "memory": 128},
       { "resource_id": "dpu1_nic", "name": "nic", "type": "communicate", "bandwidth_MBps": 100000}
     ],
     "noc": [
@@ -18,7 +18,7 @@
   {
     "dpu_id": "dpu2",
     "resources": [
-      { "resource_id": "dpu2_arm", "name": "arm", "type": "compute", "capacity": 1 },
+      { "resource_id": "dpu2_arm", "name": "arm", "type": "compute", "capacity": 4 },
       { "resource_id": "dpu2_nic", "name": "nic", "type": "communicate", "bandwidth_MBps": 100000}
     ],
     "noc": [

@@ -115,7 +115,7 @@ class SharedBus:
         if data_size_mb <= 1e-9: 
             return self.env.timeout(0)
         
-        print(f"[{self.env.now:8.2f}] [Bus: {self.name}] New transfer request for {data_size_mb:.2f} MB.")
+        # print(f"[{self.env.now:8.2f}] [Bus: {self.name}] New transfer request for {data_size_mb:.2f} MB.")
 
         completion_event = self.env.event()
         was_idle = (len(self.active_transfers) == 0)
@@ -236,11 +236,11 @@ class Simulator:
     def _compute_worker(self, task_id: str, du_index: int, pipelined_parents: List[str], non_pipelined_parents: List[str]):
         task = self.dag[task_id]
 
-        print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Waiting for parent data.")
+        # print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Waiting for parent data.")
 
         yield self.env.process(self._wait_for_parent_data(task_id, du_index, pipelined_parents, non_pipelined_parents))
         
-        print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Parent data arrived. Requesting compute resource.")
+        # print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Parent data arrived. Requesting compute resource.")
         
         compute_res_id = self.placement[task_id]
         compute_resource_pool = self.resources[compute_res_id]
@@ -254,16 +254,16 @@ class Simulator:
         
         core_token = yield compute_resource_pool.get()  # 请求一个核心
         try:
-            print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Got core, starting compute on '{compute_res_id}' for {du_compute_time:.2f} us.")
+            # print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Got core, starting compute on '{compute_res_id}' for {du_compute_time:.2f} us.")
             if du_compute_time > 0:
                 yield self.env.timeout(du_compute_time)
         finally:
-            print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Computation done, returning core.")
+            # print(f"[{self.env.now:8.2f}] [ComputeWorker] Task '{task.id}' DU-{du_index}: Computation done, returning core.")
             yield compute_resource_pool.put(core_token) # 归还核心
 
         self.task_du_done_events[task_id][du_index].succeed()
 
-        print(f"[{self.env.now:8.2f}] [Event] Task '{task.id}' DU-{du_index} finished. Event succeeded.")
+        # print(f"[{self.env.now:8.2f}] [Event] Task '{task.id}' DU-{du_index} finished. Event succeeded.")
 
     def _data_worker(self, task_id: str, du_index: int, pipelined_parents: List[str], non_pipelined_parents: List[str]):
         task = self.dag[task_id]
@@ -271,31 +271,31 @@ class Simulator:
             du_interval = getattr(task, 'du_interval', 0)
             if du_interval > 0 and du_index > 0:
                 yield self.env.timeout(du_index * du_interval)
-                print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: start transfer.")
+                # print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: start transfer.")
 
-        if task.parents:
-            print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Waiting for parent data.")
+        # if task.parents:
+        #     print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Waiting for parent data.")
 
         yield self.env.process(self._wait_for_parent_data(task_id, du_index, pipelined_parents, non_pipelined_parents))
 
-        if task.parents:
-             print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Parent data arrived.")
+        # if task.parents:
+        #     print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Parent data arrived.")
 
         storage_res_id = self.placement[task_id]
         storage_resource = self.resources.get(storage_res_id)
         du_size = task.du_size if task.du_size > 0 else (task.data_size / (task.du_num or 1))
         if du_size > 0 and storage_resource:
 
-            print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Starting storage op ({du_size:.2f} MB) on '{storage_res_id}'.")
+            # print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: Starting storage op ({du_size:.2f} MB) on '{storage_res_id}'.")
             
             yield storage_resource.bus.transfer(du_size)
             yield storage_resource.memory_container.put(du_size)
             
-            print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index} finished storage op, allocating {du_size:.2f} MB memory.")
+            # print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index} finished storage op, allocating {du_size:.2f} MB memory.")
         
         self.task_du_done_events[task_id][du_index].succeed()
 
-        print(f"[{self.env.now:8.2f}] [Event] Task '{task.id}' DU-{du_index} finished. Event succeeded.")
+        # print(f"[{self.env.now:8.2f}] [Event] Task '{task.id}' DU-{du_index} finished. Event succeeded.")
 
     def _memory_free(self, task_id: str, du_index: int):
         '''释放当前任务task_id占用的内存'''
@@ -318,7 +318,7 @@ class Simulator:
         unique_events = list(set(child_completion_events)) # 去重，如果所有子任务都需要父任务的所有du，child_completion_event有很多重复
         yield simpy.AllOf(self.env, unique_events)
         
-        print(f"[{self.env.now:8.2f}] [Memory Free] All children consumed '{task.id}'-DU{du_index}, freeing {du_size:.2f} MB from '{storage_res_id}'.")
+        # print(f"[{self.env.now:8.2f}] [Memory Free] All children consumed '{task.id}'-DU{du_index}, freeing {du_size:.2f} MB from '{storage_res_id}'.")
         
         storage_resource = self.resources.get(storage_res_id)
         if storage_resource:
@@ -354,17 +354,17 @@ class Simulator:
             yield self.du_arrival_stores[source_id][dest_id][du_index].put(True)
             return
         
-        print(f"[{self.env.now:8.2f}] [Transfer] Waiting for source '{source_id}'-DU{du_index} to be ready.")
+        # print(f"[{self.env.now:8.2f}] [Transfer] Waiting for source '{source_id}'-DU{du_index} to be ready.")
 
         yield self.task_du_done_events[source_id][du_index]
 
-        print(f"[{self.env.now:8.2f}] [Transfer] Source '{source_id}'-DU{du_index} is ready. Starting transfer to '{dest_id}'.")
+        # print(f"[{self.env.now:8.2f}] [Transfer] Source '{source_id}'-DU{du_index} is ready. Starting transfer to '{dest_id}'.")
 
         source_res_id = self.placement[source_id]
         dest_res_id = self.placement[dest_id]
         comm_path = self.router.get_path(source_res_id, dest_res_id)
 
-        print(f"[{self.env.now:8.2f}] [Transfer] Path for '{source_id}'-DU{du_index} -> '{dest_id}': {' -> '.join(comm_path)}")
+        # print(f"[{self.env.now:8.2f}] [Transfer] Path for '{source_id}'-DU{du_index} -> '{dest_id}': {' -> '.join(comm_path)}")
 
         for j in range(len(comm_path) - 1):
             u_res, v_res = comm_path[j], comm_path[j+1]
@@ -377,11 +377,11 @@ class Simulator:
                 bus_resource = self.resources.get(link_key)
             if bus_resource:
                 
-                print(f"[{self.env.now:8.2f}] [Transfer] DU-{du_index} ({du_size:.2f} MB) entering bus from '{u_res}' to '{v_res}'.")
+                # print(f"[{self.env.now:8.2f}] [Transfer] DU-{du_index} ({du_size:.2f} MB) entering bus from '{u_res}' to '{v_res}'.")
                 
                 yield bus_resource.transfer(du_size)
 
-                print(f"[{self.env.now:8.2f}] [Transfer] DU-{du_index} ({du_size:.2f} MB) exited bus from '{u_res}' to '{v_res}'.")
+                # print(f"[{self.env.now:8.2f}] [Transfer] DU-{du_index} ({du_size:.2f} MB) exited bus from '{u_res}' to '{v_res}'.")
             
             elif u_dpu != v_dpu: 
                 print(f"Warning: No bus resource found for transfer from {u_res} to {v_res}")
@@ -389,7 +389,7 @@ class Simulator:
         if self.du_arrival_stores[source_id][dest_id][du_index] is None:
             self.du_arrival_stores[source_id][dest_id][du_index] = simpy.Store(self.env, capacity=1)
         
-        print(f"[{self.env.now:8.2f}] [Transfer] DU-{du_index} from '{source_id}' has arrived at destination for '{dest_id}'.")
+        # print(f"[{self.env.now:8.2f}] [Transfer] DU-{du_index} from '{source_id}' has arrived at destination for '{dest_id}'.")
         
         yield self.du_arrival_stores[source_id][dest_id][du_index].put(True)
 

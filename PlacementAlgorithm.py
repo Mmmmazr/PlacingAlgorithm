@@ -52,12 +52,15 @@ class PlacementOptimizer:
         avg_node_costs = {}
         compute_workload = {'linear': 10, 'slice': 2, 'rope': 15, 'view': 1, 'einsum': 25, 'add': 2, 'softmax': 8}
         for task_id, task in self.dag.items():
-            avg_node_costs[task_id] = compute_workload.get(task.compute_type, 5) if task.type == 'compute' else 0
+            avg_node_costs[task_id] = compute_workload.get(task.compute_type, 5) if task.type == 'compute' else task.data_size /avg_storage_bw
         avg_edge_costs = {}
         for task_id, task in self.dag.items():
             for child_id in task.children:
                 avg_edge_costs[(task_id, child_id)] = (task.data_size / avg_link_bw) * 1e6
-        # print(avg_node_costs, avg_edge_costs)
+        
+        # print(f"平均节点成本: {avg_node_costs}")
+        # print(f"平均边成本: {avg_edge_costs}")
+
         return avg_node_costs, avg_edge_costs
 
     def _compute_rank_u(self):
@@ -155,35 +158,28 @@ class PlacementOptimizer:
         return peak_usage
 
     def run_heft(self) -> Placement:
-        # print("Running HEFT with Global Router for initial placement...")
-        # self._compute_rank_u()
+        # print("\n--- HEFT 算法开始运行 ---")
+        
+        # sorted_tasks = self.sorted_tasks
+        # print("\n--- 任务排序 (基于 rank_u 降序) ---")
+        # for task in sorted_tasks:
+        #     print(f"  Task: {task.id}, Rank: {task.rank_u:.2f}")
 
-        # sorted_tasks_for_print = sorted(self.dag.values(), key=lambda t: t.rank_u, reverse=True)
-        # print("\n--- Verifying Task Ranks (Top 5) ---")
-        # for i in range(min(5, len(sorted_tasks_for_print))):
-        #     task = sorted_tasks_for_print[i]
-        #     print(f"  Rank {i+1}: Task='{task.id}' ('{task.name}'), rank_u={task.rank_u:.2f}")
-        
-        sorted_tasks = self.sorted_tasks
-        
         placement: Placement = {}
         task_finish_time: Dict[str, float] = {}
-        resource_core_finish_times: Dict[str, List[float]] = defaultdict(list)
+        resource_finish_times: Dict[str, List[float]] = defaultdict(list)
         for res_id in self.compute_resources + self.storage_resources:
             res_capacity = self._res_map[res_id].capacity
-            resource_core_finish_times[res_id] = [0.0] * res_capacity
-        # 存储资源峰值计算
-        storage_occupancy: Dict[str, List[Tuple[float, float, float]]] = defaultdict(list)
+            resource_finish_times[res_id] = [0.0] * res_capacity
 
-        for task in sorted_tasks:
+        for task in self.sorted_tasks:
             target_resources = self.compute_resources if task.type == 'compute' else self.storage_resources
             min_eft = float('inf')
-            best_choice_info = {}
             best_resource_id = ""
+            best_core_idx = -1
 
-            # print(f"\n--- Placing Task: {task.id} ('{task.name}') ---")
+            # print(f"\n--- 正在放置任务: {task.id} ---")
             for res_id in target_resources:
-                # 数据到达时间ready_time
                 ready_time = 0.0
                 for parent_id in task.parents:
                     arrival_time = self._calculate_data_arrival_time(parent_id, res_id, placement, task_finish_time)
@@ -191,59 +187,33 @@ class PlacementOptimizer:
                 
                 execution_time = self._get_execution_time(task, res_id)
                 
-                if task.type == 'compute':
-                    # 寻找可插入的最早的执行开始时间EST
-                    core_times = resource_core_finish_times[res_id]
-                    earliest_core_time = min(core_times)
-                    core_idx = core_times.index(earliest_core_time)
+                core_times = resource_finish_times[res_id]
+                earliest_core_time = min(core_times)
+                core_idx = core_times.index(earliest_core_time)
 
-                    # 任务的开始时间是“数据准备好”和“核心可用”中的较晚者
-                    est = max(ready_time, earliest_core_time)
-                    current_eft = est + execution_time
-                    
-                    if current_eft < min_eft:
-                        min_eft = current_eft
-                        best_resource_id = res_id
-                        best_choice_info = {'core_idx': core_idx}
+                est = max(ready_time, earliest_core_time)
+                current_eft = est + execution_time
                 
-                else: # task.type == 'data'
-                    storage_write_finish_time = resource_core_finish_times[res_id][0]
-                    est = max(ready_time, storage_write_finish_time)
-                    eft = est + execution_time
-                    memory_check_start, memory_check_end = ready_time, eft
-                    storage_res_obj = self._res_map[res_id]
-                    required_memory_gb = task.data_size / 1024.0 # MB->GB
-                    
-                    if required_memory_gb > storage_res_obj.memory:
-                        continue 
-                    peak_usage_mb = self._get_peak_memory_usage(storage_occupancy[res_id], memory_check_start, memory_check_end)
-                    peak_usage_gb = peak_usage_mb / 1024.0
-                    if peak_usage_gb + required_memory_gb > storage_res_obj.memory:
-                        continue 
+                # print(f"  - 尝试资源 {res_id}:")
+                # print(f"    - 数据准备时间 (Ready Time): {ready_time:.2f}")
+                # print(f"    - 核心可用时间 (Earliest Core Time): {earliest_core_time:.2f}")
+                # print(f"    - 任务开始时间 (EST): {est:.2f}")
+                # print(f"    - 执行时间: {execution_time:.2f}")
+                # print(f"    - 完成时间 (EFT): {current_eft:.2f}")
 
-                    current_eft = eft
-                    if current_eft < min_eft:
-                        min_eft = current_eft
-                        best_resource_id = res_id
-                        best_choice_info = {'core_idx': 0, 'ready_time': ready_time}
+                if current_eft < min_eft:
+                    min_eft = current_eft
+                    best_resource_id = res_id
+                    best_core_idx = core_idx
 
-            
             placement[task.id] = best_resource_id
             task_finish_time[task.id] = min_eft
             if best_resource_id:
-                core_idx = best_choice_info['core_idx']
-                resource_core_finish_times[best_resource_id][core_idx] = min_eft
-                
-                if task.type == 'data':
-                    start_occupancy = best_choice_info['ready_time']
-                    end_occupancy = min_eft
-                    storage_occupancy[best_resource_id].append((start_occupancy, end_occupancy, task.data_size))
+                resource_finish_times[best_resource_id][best_core_idx] = min_eft
 
-
-            # print(f"{best_resource}: {resource_busy_slots[best_resource]}")
-            # print(f"  >> Placed on: '{best_resource}', EST={best_est:.2f}, EFT={min_eft:.2f} us")
+        #     print(f"  >> 决定放置在: '{best_resource_id}', 完成时间 (EFT) = {min_eft:.2f}")
         
-        # print("\nHEFT finished.")
+        # print("\n--- HEFT 算法结束 ---")
         return placement
 
     def _random_method(self, placement: Placement) -> Placement:
@@ -302,7 +272,6 @@ class PlacementOptimizer:
                                 initial_temp=1000, final_temp=1, alpha=0.99, 
                                 steps_per_temp=100, heuristic_prob=0.7) -> Placement:
         # heuristic_prob为random_method留有一定余地
-        # print("Running Simulated Annealing for optimization...")
         current_placement = copy.deepcopy(initial_placement)
         
         simulator = Simulator(self.dag, current_placement, self.network, self.links, self.router)
@@ -335,113 +304,30 @@ class PlacementOptimizer:
             print(f"Temp: {temp:.2f}, Current Cost: {current_cost:.2f} us, Best Cost: {best_cost:.2f} us")
             temp *= alpha
         
-        # print("Simulated Annealing finished.")
         return best_placement
-
-# test for router & HEFT
-# if __name__ == '__main__':
-#     from DpuNetwork import create_dpu_network
-#     from TaskGraph import create_workflow_dag
-
-#     print("="*40)
-#     print("Running Standalone Test for PlacementAlgorithm")
-#     print("="*40)
-
-#     dag = create_workflow_dag()
-#     network, links = create_dpu_network(num_dpus=4)
     
-#     test_router = GlobalRouter(network, links)
-
-#     optimizer = PlacementOptimizer(dag, network, links)
-#     optimizer.router = test_router 
-    
-#     initial_placement = optimizer.run_heft()
-
-#     print("\n--- HEFT Final Placement Result ---")
-#     for task_id, res_id in initial_placement.items():
-#         task_name = dag[task_id].name
-#         dpu_id = optimizer._res_to_dpu_map.get(res_id, "Unknown DPU")
-#         print(f"  - Task '{task_name}' ({task_id}) -> Resource '{res_id}' (on DPU '{dpu_id}')")
-
-# test for HEFT
-from typing import Dict
-from PlacementAlgorithm import PlacementOptimizer
-from BasicDefinitions import Task, DPU, Link, Resource
-
-def create_complex_test_environment():
-    """创建一个包含真实依赖、异构资源和通信成本的测试环境"""
-
-    # 1. 创建任务图 (DAG) - Fork-Join 结构
-    dag: Dict[str, Task] = {
-        "T_Start": Task(id="T_Start", name="LoadData", type='data', data_size=100.0, children=["T_A", "T_C"]),
-        "T_A": Task(id="T_A", name="Heavy_A", type='compute', compute_type='einsum', data_size=50.0, parents=["T_Start"], children=["T_B"]), # 产生50MB数据
-        "T_C": Task(id="T_C", name="Heavy_C", type='compute', compute_type='einsum', data_size=50.0, parents=["T_Start"], children=["T_D"]), # 产生50MB数据
-        "T_B": Task(id="T_B", name="Light_B", type='compute', compute_type='add', parents=["T_A"], children=["T_Finish"]),
-        "T_D": Task(id="T_D", name="Light_D", type='compute', compute_type='add', parents=["T_C"], children=["T_Finish"]),
-        "T_Finish": Task(id="T_Finish", name="StoreResult", type='data', data_size=1.0, parents=["T_B", "T_D"])
-    }
-
-    # 2. 创建异构网络
-    network: Dict[str, DPU] = {
-        "dpu0": DPU(
-            id="dpu0",
-            resources={
-                "dpu0_dram": Resource("dpu0_dram", "dram", "storage", bandwidth_MBps=20000),
-                "dpu0_dpa": Resource("dpu0_dpa", "dpa", "compute", capacity=1), # 高性能计算
-                "dpu0_nic": Resource("dpu0_nic", "nic", "communication")
-            },
-            # DPU内部所有资源都通过NoC连接
-            noc=[("dpu0_dram", "dpu0_dpa"), ("dpu0_dram", "dpu0_nic"), ("dpu0_dpa", "dpu0_nic")]
-        ),
-        "dpu1": DPU(
-            id="dpu1",
-            resources={
-                "dpu1_dram": Resource("dpu1_dram", "dram", "storage", bandwidth_MBps=20000),
-                "dpu1_arm": Resource("dpu1_arm", "arm", "compute", capacity=1), # 普通性能计算
-                "dpu1_nic": Resource("dpu1_nic", "nic", "communication")
-            },
-            noc=[("dpu1_dram", "dpu1_arm"), ("dpu1_dram", "dpu1_nic"), ("dpu1_arm", "dpu1_nic")]
-        )
-    }
-
-    links: Dict[str, Link] = {
-        "link_dpu0_dpu1": Link("link_dpu0_dpu1", "dpu0", "dpu1", 100) # 100 Gbps link
-    }
-    
-    return dag, network, links
-
-class HighPerformanceOptimizer(PlacementOptimizer):
-    """
-    为了测试异构性，我们让DPA比ARM快5倍。
-    """
-    def _get_execution_time(self, task: Task, resource_id: str) -> float:
-        # 调用父类的原始方法获取基础时间
-        base_time = super()._get_execution_time(task, resource_id)
-        if task.type == 'compute':
-            if 'dpa' in resource_id:
-                return base_time / 5.0  # DPA 速度是 ARM 的5倍
-            else: # arm
-                return base_time
-        return base_time
 
 if __name__ == '__main__':
-    print("="*60)
-    print(" Running Complex HEFT Verification Test ")
-    print(" (Dependencies, Heterogeneous Resources, Communication Costs) ")
-    print("="*60)
+    from DpuNetwork import create_dpu_network
+    from TaskGraph import create_workflow_dag # 确保您的文件名和函数名正确
 
-    # 1. 创建复杂的测试环境
-    dag, network, links = create_complex_test_environment()
-    
-    # 2. 使用我们专为测试设计的、带性能差异的Optimizer
-    optimizer = HighPerformanceOptimizer(dag, network, links)
-    
-    # 3. 运行真实的HEFT算法
-    initial_placement = optimizer.run_heft()
+    print("="*40)
+    print("运行 HEFT 算法测试")
+    print("="*40)
 
-    print("\n--- HEFT Final Placement Result ---")
-    makespan = 0
-    for task_id, res_id in initial_placement.items():
+    # 1. 加载 DPU 网络和任务图
+    dag = create_workflow_dag(json_path=r"C:\code\PlacingAlgorithm\test_cases\TaskGraph1.json")
+    network, links = create_dpu_network(json_path=r"C:\code\PlacingAlgorithm\test_cases\DpuNetwork1.json")
+
+    # 2. 初始化优化器
+    optimizer = PlacementOptimizer(dag, network, links)
+    
+    # 3. 运行 HEFT 算法
+    final_placement = optimizer.run_heft()
+
+    # 4. 打印最终放置结果
+    print("\n--- HEFT 最终放置结果 ---")
+    for task_id, res_id in final_placement.items():
         task_name = dag[task_id].name
-        dpu_id = optimizer._res_to_dpu_map.get(res_id, "Unknown DPU")
-        print(f"  - Task '{task_name}' ({task_id}) -> Resource '{res_id}' (on DPU '{dpu_id}')")
+        dpu_id = optimizer._res_to_dpu_map.get(res_id, "未知 DPU")
+        print(f"  - 任务 '{task_name}' ({task_id}) -> 资源 '{res_id}' (在 DPU '{dpu_id}' 上)")

@@ -2,6 +2,7 @@ from PlacementAlgorithm import PlacementOptimizer
 from DesSimulator import Simulator
 from TaskGraph import create_workflow_dag
 from DpuNetwork import create_dpu_network
+import random
 
 def print_placement_details(title, placement, dag, optimizer):
     print(title)
@@ -38,7 +39,7 @@ if __name__ == "__main__":
         final_temp=1,
         alpha=0.95,
         steps_per_temp=20,
-        heuristic_prob=0.0
+        heuristic_prob=0.3
     )
     # 我试了一下，好像heuristic还没有纯随机好
     print_placement_details("\n--- Simulated Annealing Final Placement Result ---", final_placement, dag, optimizer)

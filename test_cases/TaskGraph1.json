@@ -10,7 +10,7 @@
   },
   {
     "id": "T_B",
-    "name": "Process on DPU1",
+    "name": "Process1",
     "type": "compute",
     "compute_type": "linear",
     "data_size": 10.0,
@@ -29,7 +29,7 @@
   },
   {
     "id": "T_D",
-    "name": "Process on DPU2",
+    "name": "Process2",
     "type": "compute",
     "compute_type": "einsum",
     "data_size": 0,

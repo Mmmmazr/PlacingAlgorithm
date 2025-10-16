@@ -23,7 +23,7 @@ def create_workflow_dag(json_path: str = "TaskGraph.json") -> OrderedDict[str, T
     return tasks
 
 if __name__ == '__main__':
-    workflow = create_workflow_dag()
+    workflow = create_workflow_dag(json_path=r"C:\code\PlacingAlgorithm\test_cases\TaskGraph1.json")
     print(f"Successfully created a DAG with {len(workflow)} nodes.")
     for task_id, task in workflow.items():
         print(f"\n--- Node ID: {task_id} ---")
