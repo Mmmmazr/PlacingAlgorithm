@@ -30,7 +30,7 @@ def create_dpu_network(json_path: str = r'C:\code\PlacingAlgorithm\DpuNetwork.js
         dpus[dpu['dpu_id']] = DPU(id=dpu['dpu_id'], resources=resources, noc=noc_edges)
 
         for neighbor in dpu['neighbors']:
-            link_id = f"link_{dpu['dpu_id']}_{neighbor}"
+            link_id = f"link_{dpu['dpu_id']}_{neighbor['id']}"
             links[link_id] = Link(id=link_id, source_dpu=dpu['dpu_id'], dest_dpu=neighbor['id'], bandwidth_MBps=neighbor['bandwidth_MBps'])
             
     # print(f"成功创建了一个包含 {len(dpus)} 个DPU和 {len(links)} 条链路的全连接网络。")

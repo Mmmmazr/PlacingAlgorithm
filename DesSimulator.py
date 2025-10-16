@@ -268,7 +268,7 @@ class Simulator:
     def _data_worker(self, task_id: str, du_index: int, pipelined_parents: List[str], non_pipelined_parents: List[str]):
         task = self.dag[task_id]
         if not task.parents:
-            du_interval = getattr(task, 'du_interval', 0)
+            du_interval = getattr(task, 'du_interval', 10)
             if du_interval > 0 and du_index > 0:
                 yield self.env.timeout(du_index * du_interval)
                 # print(f"[{self.env.now:8.2f}] [DataWorker] Task '{task.id}' DU-{du_index}: start transfer.")

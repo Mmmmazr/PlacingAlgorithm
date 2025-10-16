@@ -41,7 +41,7 @@ class Task:
     # if type == 'compute':
     compute_type: str = 'add'
 
-    # 'compute"和'data"都有du_num, du_size, data_size表示出口数据，data_size = du_num * du_size
+    # 'compute"和'data"都有du_num, du_size, data_size表示出口数据，data_size = du_num * du_size (MB)
     du_num: int = 1
     du_size: float = 0.0
     

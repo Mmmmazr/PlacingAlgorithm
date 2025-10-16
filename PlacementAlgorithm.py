@@ -52,7 +52,7 @@ class PlacementOptimizer:
         avg_node_costs = {}
         compute_workload = {'linear': 10, 'slice': 2, 'rope': 15, 'view': 1, 'einsum': 25, 'add': 2, 'softmax': 8}
         for task_id, task in self.dag.items():
-            avg_node_costs[task_id] = compute_workload.get(task.compute_type, 5) if task.type == 'compute' else task.data_size /avg_storage_bw
+            avg_node_costs[task_id] = compute_workload.get(task.compute_type, 5) if task.type == 'compute' else task.data_size / avg_storage_bw * 1e6
         avg_edge_costs = {}
         for task_id, task in self.dag.items():
             for child_id in task.children:
@@ -74,61 +74,87 @@ class PlacementOptimizer:
                     max_succ_rank = max(max_succ_rank, comm_cost + child_rank_u)
             task.rank_u = self.avg_node_costs.get(task_id, 0) + max_succ_rank
 
-    def _calculate_data_arrival_time(self, parent_id: str, child_res_id: str,
-                                       placement: Placement, task_finish_time: Dict) -> float:
-        """计算数据到达时间(还没考虑链路争用)"""
-        data_ready_time = task_finish_time.get(parent_id, 0)
-        parent_task = self.dag[parent_id]
-        data_size = parent_task.data_size
-        if data_size <= 1e-9:
-            return data_ready_time
+    def _get_arrival_times(self, task_id: str, dest_res_id: str, placement: Placement, du_finish_times: Dict[str, List[float]]) -> List[float]:
+        task = self.dag[task_id]
+        du_num = task.du_num if task.du_num > 0 else 1
+        du_arrival_times = [0.0] * du_num
 
-        source_res_id = placement[parent_id]
-        if source_res_id == child_res_id:
-            return data_ready_time
-
-        comm_path = self.router.get_path(source_res_id, child_res_id)
-        if not comm_path or len(comm_path) <= 1:
-            return data_ready_time
-
-        bottleneck_bw_mbps = float('inf')
-        
-        for i in range(len(comm_path) - 1):
-            u_id, v_id = comm_path[i], comm_path[i+1]
-            u_dpu = self._res_to_dpu_map.get(u_id)
-            v_dpu = self._res_to_dpu_map.get(v_id)
-
-            current_bw = float('inf')
-            if u_dpu == v_dpu:
-                base_u_id = '_'.join(u_id.split('_')[:-1]) if u_id.rsplit('_', 1)[-1].isdigit() else u_id
-                u_res = self._res_map.get(base_u_id)
-                current_bw = u_res.internal_bandwidth_MBps if u_res else float('inf')
-            else:
-                link_key = f"link_{u_dpu}_{v_dpu}"
-                rev_link_key = f"link_{v_dpu}_{u_dpu}"
-                link = self.links.get(link_key) or self.links.get(rev_link_key)
-                if link:
-                    current_bw = link.bandwidth_MBps
+        for parent_id in task.parents:
+            parent_task = self.dag[parent_id]
+            parent_du_num = parent_task.du_num if parent_task.du_num > 0 else 1
+            parent_du_size = parent_task.du_size if parent_task.du_size > 0 else parent_task.data_size / parent_du_num
             
-            bottleneck_bw_mbps = min(bottleneck_bw_mbps, current_bw)
-        
-        if bottleneck_bw_mbps == float('inf') or bottleneck_bw_mbps <= 0:
-            return float('inf')
+            source_res_id = placement[parent_id]
+            comm_time_du = 0
+            if source_res_id != dest_res_id and parent_du_size > 0:
+                path = self.router.get_path(source_res_id, dest_res_id)
+                bottleneck_bw = float('inf')
+                for i in range(len(path) - 1):
+                    u, v = path[i], path[i+1]
+                    u_dpu, v_dpu = self._res_to_dpu_map[u], self._res_to_dpu_map[v]
+                    current_bw = float('inf')
+                    if u_dpu == v_dpu:
+                        current_bw = self._res_map[u].internal_bandwidth_MBps
+                    else:
+                        link = self.links.get(f"link_{u_dpu}_{v_dpu}") or self.links.get(f"link_{v_dpu}_{u_dpu}")
+                        if link: 
+                            current_bw = link.bandwidth_MBps
+                    bottleneck_bw = min(bottleneck_bw, current_bw)
+                if bottleneck_bw != float('inf'):
+                    comm_time_du = (parent_du_size / bottleneck_bw) * 1e6
+            
+            parent_finish_times = du_finish_times[parent_id]
+            if parent_du_num == du_num: # 流水线模式
+                for i in range(du_num):
+                    arrival = parent_finish_times[i] + comm_time_du
+                    du_arrival_times[i] = max(du_arrival_times[i], arrival)
+            else: 
+                last_parent_du_finish = parent_finish_times[-1]
+                arrival = last_parent_du_finish + comm_time_du
+                for i in range(du_num):
+                    du_arrival_times[i] = max(du_arrival_times[i], arrival)
 
-        duration = (data_size / bottleneck_bw_mbps) * 1e6 
-        # print(f"({parent_id}, {child_res_id}): {duration}")
-        return data_ready_time + duration
+        return du_arrival_times
 
     def _get_execution_time(self, task: Task, resource_id: str) -> float: # 重载后可根据resource_id的类型（如dpa vs arm）进行性能调整
+        """计算单个DU的执行时间"""
+        du_num = task.du_num if task.du_num > 0 else 1
         if task.type == 'compute':
-            compute_workload = {'linear': 10, 'slice': 2, 'rope': 15, 'view': 1, 'einsum': 25, 'add': 2, 'softmax': 8} # 单位us
-            return float(compute_workload.get(task.compute_type, 5))
+            compute_workload = {'linear': 10, 'slice': 2, 'rope': 15, 'view': 1, 'einsum': 25, 'add': 2, 'softmax': 8}
+            total_workload = float(compute_workload.get(task.compute_type, 5))
+            return total_workload / du_num
         else: # 'data'
-            base_res_id = '_'.join(resource_id.split('_')[:-1]) if resource_id.rsplit('_', 1)[-1].isdigit() else resource_id
-            storage_resource = self._res_map.get(base_res_id)
-            if storage_resource and storage_resource.bandwidth_MBps > 0:
-                return (task.data_size / storage_resource.bandwidth_MBps) * 1e6
+            storage_resource = self._res_map.get(resource_id)
+            if storage_resource and storage_resource.bandwidth_MBps > 0 and task.du_size > 0:
+                return (task.du_size / storage_resource.bandwidth_MBps) * 1e6
             return 0.0
+
+    def _find_slots(self, core_busy_slots: List[Tuple[float, float]], du_arrival_times: List[float], du_exec_time: float) -> Tuple[float, float]:
+        du_num = len(du_arrival_times)
+        start = du_arrival_times[0]
+        
+        while True:
+            current_start = start
+            is_valid_slot = True
+            
+            du_start_times = [0.0] * du_num
+            du_start_times[0] = current_start
+            
+            for i in range(1, du_num):
+                prev_du_finish = du_start_times[i-1] + du_exec_time
+                du_start_times[i] = max(prev_du_finish, du_arrival_times[i])
+
+            start_time = du_start_times[0]
+            end_time = du_start_times[-1] + du_exec_time
+            
+            for busy_start, busy_end in core_busy_slots:
+                if start_time < busy_end and end_time > busy_start:
+                    is_valid_slot = False
+                    start = busy_end
+                    break
+            
+            if is_valid_slot:
+                return start_time, end_time
 
     def _get_peak_memory_usage(self, existing_intervals: List[Tuple[float, float, float]],
                                  start_time: float, end_time: float) -> float:
@@ -164,56 +190,80 @@ class PlacementOptimizer:
         # print("\n--- 任务排序 (基于 rank_u 降序) ---")
         # for task in sorted_tasks:
         #     print(f"  Task: {task.id}, Rank: {task.rank_u:.2f}")
-
+            
         placement: Placement = {}
-        task_finish_time: Dict[str, float] = {}
-        resource_finish_times: Dict[str, List[float]] = defaultdict(list)
-        for res_id in self.compute_resources + self.storage_resources:
-            res_capacity = self._res_map[res_id].capacity
-            resource_finish_times[res_id] = [0.0] * res_capacity
+        du_finish_times: Dict[str, List[float]] = defaultdict(list)
+        resource_busy_slots: Dict[str, List[List[Tuple[float, float]]]] = defaultdict(lambda: [[] for _ in range(500)]) # 假设最多100核
+        storage_occupancy: Dict[str, List[Tuple[float, float, float]]] = defaultdict(list)
 
         for task in self.sorted_tasks:
+            # print(f"\n\n{'='*20} 正在放置任务: {task.id} (Type: {task.type}, DUs: {task.du_num}) {'='*20}")
+
             target_resources = self.compute_resources if task.type == 'compute' else self.storage_resources
-            min_eft = float('inf')
-            best_resource_id = ""
-            best_core_idx = -1
+            best_choice = {
+                "eft": float('inf'),
+                "res_id": None,
+                "core_idx": -1,
+                "start_time": -1.0,
+                "final_du_finish_times": []
+            }
 
-            # print(f"\n--- 正在放置任务: {task.id} ---")
             for res_id in target_resources:
-                ready_time = 0.0
-                for parent_id in task.parents:
-                    arrival_time = self._calculate_data_arrival_time(parent_id, res_id, placement, task_finish_time)
-                    ready_time = max(ready_time, arrival_time)
+                if task.type == "data" and len(task.parents) == 0:
+                    du_arrival_times = [i * getattr(task, 'du_interval', 10) for i in range(task.du_num)]
+                else: du_arrival_times = self._get_arrival_times(task.id, res_id, placement, du_finish_times)
                 
-                execution_time = self._get_execution_time(task, res_id)
-                
-                core_times = resource_finish_times[res_id]
-                earliest_core_time = min(core_times)
-                core_idx = core_times.index(earliest_core_time)
+                # print(f"     - DU 到达时间 (Ready Times): {[f'{t:.2f}' for t in du_arrival_times]}")
+                du_exec_time = self._get_execution_time(task, res_id)
+                # print(f"     - 单个 DU 执行时间: {du_exec_time:.2f} us")
 
-                est = max(ready_time, earliest_core_time)
-                current_eft = est + execution_time
-                
-                # print(f"  - 尝试资源 {res_id}:")
-                # print(f"    - 数据准备时间 (Ready Time): {ready_time:.2f}")
-                # print(f"    - 核心可用时间 (Earliest Core Time): {earliest_core_time:.2f}")
-                # print(f"    - 任务开始时间 (EST): {est:.2f}")
-                # print(f"    - 执行时间: {execution_time:.2f}")
-                # print(f"    - 完成时间 (EFT): {current_eft:.2f}")
+                res_obj = self._res_map[res_id]
+                for core_idx in range(res_obj.capacity):
+                    # print(f"    - 核心 #{core_idx}:")
+                    core_slots = resource_busy_slots[res_id][core_idx]
+                    est, eft = self._find_slots(core_slots, du_arrival_times, du_exec_time)
+                    # print(f"      - 当前忙碌时段: {[(f'[{s:.2f}, {e:.2f}]') for s, e in core_slots]}")
+                    # print(f"      - 找到的最佳时间槽: EST = {est:.2f}, EFT = {eft:.2f}")
 
-                if current_eft < min_eft:
-                    min_eft = current_eft
-                    best_resource_id = res_id
-                    best_core_idx = core_idx
+                    if task.type == 'data':
+                        required_mem_gb = task.data_size / 1024.0
+                        if required_mem_gb > res_obj.memory:
+                            continue 
+                        peak_usage_mb = self._get_peak_memory_usage(storage_occupancy[res_id], est, eft)
+                        if (peak_usage_mb + task.data_size) > res_obj.memory * 1024:
+                            continue 
 
-            placement[task.id] = best_resource_id
-            task_finish_time[task.id] = min_eft
-            if best_resource_id:
-                resource_finish_times[best_resource_id][best_core_idx] = min_eft
+                    if eft < best_choice["eft"]:
+                        # print(f"      - 新的最优选择: EFT {eft:.2f} < 当前最优 {best_choice['eft']:.2f}. 更新选择。")
+                        best_choice["eft"] = eft
+                        best_choice["res_id"] = res_id
+                        best_choice["core_idx"] = core_idx
+                        best_choice["start_time"] = est
+                        final_du_starts = [0.0] * len(du_arrival_times)
+                        final_du_starts[0] = est
+                        for i in range(1, len(du_arrival_times)):
+                            prev_finish = final_du_starts[i-1] + du_exec_time
+                            final_du_starts[i] = max(prev_finish, du_arrival_times[i])
+                        best_choice["final_du_finish_times"] = [s + du_exec_time for s in final_du_starts]
+            
+            # 更新
+            best_res = best_choice["res_id"]
+            best_core = best_choice["core_idx"]
 
-        #     print(f"  >> 决定放置在: '{best_resource_id}', 完成时间 (EFT) = {min_eft:.2f}")
-        
-        # print("\n--- HEFT 算法结束 ---")
+            # print(f"\n  [DECISION] 任务 '{task.id}' 最终决定放置在: [{best_res}] 的核心 #[{best_core}]")
+            # print(f"    - 任务流开始时间 (EST): {best_choice['start_time']:.2f}")
+            # print(f"    - 任务流结束时间 (EFT): {best_choice['eft']:.2f}")
+            # print(f"    - 各 DU 完成时间: {[f'{t:.2f}' for t in best_choice['final_du_finish_times']]}")
+
+            placement[task.id] = best_res
+            du_finish_times[task.id] = best_choice["final_du_finish_times"]
+            new_busy_slot = (best_choice["start_time"], best_choice["eft"])
+            resource_busy_slots[best_res][best_core].append(new_busy_slot)
+            resource_busy_slots[best_res][best_core].sort()
+            if task.type == 'data':
+                storage_occupancy[best_res].append((best_choice["start_time"], best_choice["eft"], task.data_size))
+                # print(f"    - 更新 [{best_res}] 的存储占用.")
+
         return placement
 
     def _random_method(self, placement: Placement) -> Placement:
@@ -309,7 +359,7 @@ class PlacementOptimizer:
 
 if __name__ == '__main__':
     from DpuNetwork import create_dpu_network
-    from TaskGraph import create_workflow_dag # 确保您的文件名和函数名正确
+    from TaskGraph import create_workflow_dag 
 
     print("="*40)
     print("运行 HEFT 算法测试")
@@ -318,6 +368,7 @@ if __name__ == '__main__':
     # 1. 加载 DPU 网络和任务图
     dag = create_workflow_dag(json_path=r"C:\code\PlacingAlgorithm\test_cases\TaskGraph1.json")
     network, links = create_dpu_network(json_path=r"C:\code\PlacingAlgorithm\test_cases\DpuNetwork1.json")
+    setattr(dag['T_A'], 'du_interval', 10.0) 
 
     # 2. 初始化优化器
     optimizer = PlacementOptimizer(dag, network, links)
